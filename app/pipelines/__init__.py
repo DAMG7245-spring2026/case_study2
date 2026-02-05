@@ -5,6 +5,7 @@ from app.pipelines.document_parser import DocumentParser, SemanticChunker
 from app.pipelines.job_signals import JobSignalCollector
 from app.pipelines.tech_signals import TechStackCollector
 from app.pipelines.patent_signals import PatentSignalCollector
+from app.pipelines.leadership_signals import LeadershipSignalCollector
 
 __all__ = [
     "SECEdgarPipeline",
@@ -13,4 +14,5 @@ __all__ = [
     "JobSignalCollector",
     "TechStackCollector",
     "PatentSignalCollector",
+    "LeadershipSignalCollector",
 ]

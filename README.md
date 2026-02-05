@@ -261,6 +261,7 @@ If set, the evidence collection script will fetch real data; if omitted, those s
 - `SERPAPI_KEY` – [SerpApi](https://serpapi.com/) (Google Jobs) for job postings
 - `BUILTWITH_API_KEY` – [BuiltWith Free API](https://api.builtwith.com/free-api#usage) for tech stack / digital presence. Get the key from the Free API product; 1 req/s limit.
 - `LENS_API_KEY` – [Lens.org](https://docs.api.lens.org/) patent API token for innovation/patent data (request access via Lens.org)
+- `LINKEDIN_API_KEY` – (optional) Third-party LinkedIn company/exec data API (e.g. RapidAPI). If set, leadership signals can include LinkedIn-sourced data; if omitted, leadership signals use only the company website (about/leadership pages).
 
 ---
 

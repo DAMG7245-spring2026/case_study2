@@ -1,6 +1,7 @@
 """Job posting signal collector for AI hiring analysis."""
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -38,11 +39,40 @@ class JobSignalCollector:
         "pandas", "numpy", "sql", "databricks"
     ]
 
+    # Only keep jobs posted within this many days (SerpApi often returns "X days ago")
+    RECENT_DAYS = 7
+
     def __init__(self):
         self.client = httpx.Client(
             timeout=30.0,
             headers={"User-Agent": "Mozilla/5.0 (compatible; research)"}
         )
+
+    def _posted_within_days(self, posted_str: Optional[str], days: float = 7) -> bool:
+        """True if posted_str indicates the job was posted within the last `days` days, or if unparseable (keep)."""
+        if not posted_str or not isinstance(posted_str, str):
+            return True
+        s = posted_str.strip().lower()
+        if s in ("just posted", "today"):
+            return True
+        if s == "yesterday":
+            return days >= 1
+        # "N hours ago" or "N hour ago"
+        m = re.match(r"(\d+)\s*hours?\s*ago", s)
+        if m:
+            return int(m.group(1)) <= (days * 24)
+        # "N days ago" or "N day ago"
+        m = re.match(r"(\d+)\s*days?\s*ago", s)
+        if m:
+            return int(m.group(1)) <= days
+        # "1 week ago", "2 weeks ago"
+        m = re.match(r"(\d+)\s*weeks?\s*ago", s)
+        if m:
+            return int(m.group(1)) * 7 <= days
+        # "N+ days ago", "30+ days ago", "1 month ago" etc. -> exclude
+        if re.search(r"\d+\s*\+\s*days?\s*ago", s) or "month" in s or "year" in s:
+            return False
+        return True  # unparseable: keep
 
     def fetch_postings(self, company_name: str, api_key: str | None = None) -> list["JobPosting"]:
         """Fetch job postings from SerpApi (Google Jobs). Returns [] if no key or on failure."""
@@ -67,8 +97,18 @@ class JobSignalCollector:
                 company = j.get("company_name") or company_name
                 loc = (j.get("location") or [""])[0] if isinstance(j.get("location"), list) else (j.get("location") or "")
                 link = j.get("link") or j.get("apply_link") or ""
-                posted = j.get("posted_at") or j.get("date") if isinstance(j.get("posted_at"), str) else None
+                # Use posted_at if it's a string, else date if available, else None
+                posted_at_val = j.get("posted_at")
+                date_val = j.get("date")
+                if isinstance(posted_at_val, str):
+                    posted = posted_at_val
+                elif isinstance(date_val, str):
+                    posted = date_val
+                else:
+                    posted = None
                 if not title and not desc:
+                    continue
+                if not self._posted_within_days(posted, self.RECENT_DAYS):
                     continue
                 p = JobPosting(
                     title=title,

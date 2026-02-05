@@ -155,10 +155,11 @@ def _run_backfill(
     
     from app.pipelines import (
         SECEdgarPipeline, DocumentParser, SemanticChunker,
-        JobSignalCollector, TechStackCollector, PatentSignalCollector
+        JobSignalCollector, TechStackCollector, PatentSignalCollector,
+        LeadershipSignalCollector,
     )
     from app.config import get_settings
-    
+
     settings = get_settings()
     stats = {"companies": 0, "documents": 0, "chunks": 0, "signals": 0, "s3_uploads": 0, "errors": 0}
     
@@ -279,73 +280,108 @@ def _run_backfill(
             # ========== SIGNALS ==========
             if include_signals:
                 try:
-                    # Determine AI maturity level
-                    ai_level = "high" if ticker in ["JPM", "WMT", "GS", "ADP"] else "medium"
-                    if ticker in ["CAT", "HCA"]:
-                        ai_level = "low"
-                    
-                    # Job signals
                     job_collector = JobSignalCollector()
-                    postings = job_collector.create_sample_postings(company_info["name"], ai_focus=ai_level)
-                    job_signal = job_collector.analyze_job_postings(company_info["name"], postings, company_id)
-                    
-                    db.insert_signal(
-                        company_id=company_id,
-                        category=job_signal.category.value,
-                        source=job_signal.source.value,
-                        signal_date=job_signal.signal_date,
-                        raw_value=job_signal.raw_value,
-                        normalized_score=job_signal.normalized_score,
-                        confidence=job_signal.confidence,
-                        metadata=job_signal.metadata
-                    )
-                    
-                    # Tech signals
                     tech_collector = TechStackCollector()
-                    techs = tech_collector.create_sample_technologies(ai_maturity=ai_level)
-                    tech_signal = tech_collector.analyze_tech_stack(company_id, techs)
-                    
-                    db.insert_signal(
-                        company_id=company_id,
-                        category=tech_signal.category.value,
-                        source=tech_signal.source.value,
-                        signal_date=tech_signal.signal_date,
-                        raw_value=tech_signal.raw_value,
-                        normalized_score=tech_signal.normalized_score,
-                        confidence=tech_signal.confidence,
-                        metadata=tech_signal.metadata
-                    )
-                    
-                    # Patent signals
                     patent_collector = PatentSignalCollector()
-                    patents = patent_collector.create_sample_patents(company_info["name"], ai_innovation=ai_level)
-                    patent_signal = patent_collector.analyze_patents(company_id, patents)
-                    
-                    db.insert_signal(
-                        company_id=company_id,
-                        category=patent_signal.category.value,
-                        source=patent_signal.source.value,
-                        signal_date=patent_signal.signal_date,
-                        raw_value=patent_signal.raw_value,
-                        normalized_score=patent_signal.normalized_score,
-                        confidence=patent_signal.confidence,
-                        metadata=patent_signal.metadata
+                    domain = company_info.get("domain") or ""
+
+                    hiring_score = 0.0
+                    digital_score = 0.0
+                    innovation_score = 0.0
+                    signals_collected = 0
+
+                    # Job signals (SerpAPI)
+                    postings = job_collector.fetch_postings(company_info["name"], api_key=settings.serpapi_key or None)
+                    if postings:
+                        job_signal = job_collector.analyze_job_postings(company_info["name"], postings, company_id)
+                        db.insert_signal(
+                            company_id=company_id,
+                            category=job_signal.category.value,
+                            source=job_signal.source.value,
+                            signal_date=job_signal.signal_date,
+                            raw_value=job_signal.raw_value,
+                            normalized_score=job_signal.normalized_score,
+                            confidence=job_signal.confidence,
+                            metadata=job_signal.metadata
+                        )
+                        hiring_score = job_signal.normalized_score
+                        signals_collected += 1
+
+                    # Tech signals (BuiltWith)
+                    techs = tech_collector.fetch_tech_stack(domain, api_key=settings.builtwith_api_key or None)
+                    if techs:
+                        tech_signal = tech_collector.analyze_tech_stack(company_id, techs)
+                        db.insert_signal(
+                            company_id=company_id,
+                            category=tech_signal.category.value,
+                            source=tech_signal.source.value,
+                            signal_date=tech_signal.signal_date,
+                            raw_value=tech_signal.raw_value,
+                            normalized_score=tech_signal.normalized_score,
+                            confidence=tech_signal.confidence,
+                            metadata=tech_signal.metadata
+                        )
+                        digital_score = tech_signal.normalized_score
+                        signals_collected += 1
+
+                    # Patent signals (Lens)
+                    patents = patent_collector.fetch_patents(company_info["name"], api_key=settings.lens_api_key or None)
+                    if patents:
+                        patent_signal = patent_collector.analyze_patents(company_id, patents)
+                        db.insert_signal(
+                            company_id=company_id,
+                            category=patent_signal.category.value,
+                            source=patent_signal.source.value,
+                            signal_date=patent_signal.signal_date,
+                            raw_value=patent_signal.raw_value,
+                            normalized_score=patent_signal.normalized_score,
+                            confidence=patent_signal.confidence,
+                            metadata=patent_signal.metadata
+                        )
+                        innovation_score = patent_signal.normalized_score
+                        signals_collected += 1
+
+                    # Leadership signals (company website + optional LinkedIn)
+                    leadership_collector = LeadershipSignalCollector()
+                    website_data = leadership_collector.fetch_from_company_website(domain)
+                    linkedin_data = leadership_collector.fetch_from_linkedin(
+                        company_info["name"], api_key=settings.linkedin_api_key or None
                     )
-                    
-                    # Update summary
+                    leadership_signals = leadership_collector.analyze_leadership(
+                        company_id, website_data=website_data, linkedin_data=linkedin_data
+                    )
+                    if not leadership_signals:
+                        logger.info(
+                            f"Task {task_id}: No leadership data for {ticker} (domain={domain!r}); "
+                            "check logs for leadership_fetch_no_page if website fetch failed."
+                        )
+                    leadership_score = 0.0
+                    for sig in leadership_signals:
+                        db.insert_signal(
+                            company_id=company_id,
+                            category=sig.category.value,
+                            source=sig.source.value,
+                            signal_date=sig.signal_date,
+                            raw_value=sig.raw_value,
+                            normalized_score=sig.normalized_score,
+                            confidence=sig.confidence,
+                            metadata=sig.metadata
+                        )
+                        leadership_score = max(leadership_score, sig.normalized_score)
+                        signals_collected += 1
+
                     db.upsert_signal_summary(
                         company_id=company_id,
                         ticker=ticker,
-                        technology_hiring_score=job_signal.normalized_score,
-                        innovation_activity_score=patent_signal.normalized_score,
-                        digital_presence_score=tech_signal.normalized_score,
-                        leadership_signals_score=50.0,
-                        signal_count=3
+                        technology_hiring_score=hiring_score,
+                        innovation_activity_score=innovation_score,
+                        digital_presence_score=digital_score,
+                        leadership_signals_score=leadership_score,
+                        signal_count=signals_collected
                     )
-                    
-                    stats["signals"] += 3
-                    logger.info(f"Task {task_id}: Collected 3 signals for {ticker}")
-                    
+                    stats["signals"] += signals_collected
+                    logger.info(f"Task {task_id}: Collected {signals_collected} signals for {ticker}")
+
                 except Exception as e:
                     logger.error(f"Task {task_id}: Error collecting signals for {ticker}: {e}")
                     stats["errors"] += 1

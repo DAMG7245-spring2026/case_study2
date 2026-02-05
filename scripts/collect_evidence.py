@@ -27,7 +27,9 @@ from app.pipelines import (
     JobSignalCollector,
     TechStackCollector,
     PatentSignalCollector,
+    LeadershipSignalCollector,
 )
+from app.config import get_settings
 from app.services.snowflake import get_snowflake_service
 from app.services.s3_storage import get_s3_storage
 
@@ -202,87 +204,126 @@ class EvidenceCollector:
         return docs_processed
 
     def collect_signals(self, ticker: str, company_id: UUID) -> int:
-        """Collect external signals for a company."""
+        """Collect external signals for a company using real API fetches."""
         logger.info(f"📊 Collecting signals for {ticker}")
-        
+
         company_info = TARGET_COMPANIES[ticker]
-        
-        # Determine AI maturity level based on company
-        ai_level = "high" if ticker in ["JPM", "WMT", "GS", "ADP"] else "medium"
-        if ticker in ["CAT", "HCA"]:
-            ai_level = "low"
-        
+        domain = company_info.get("domain", "")
+        settings = get_settings()
+
+        hiring_score = 0.0
+        digital_score = 0.0
+        innovation_score = 0.0
         signals_collected = 0
-        
+
         try:
-            # Job posting signal
-            postings = self.job_collector.create_sample_postings(company_info["name"], ai_focus=ai_level)
-            job_signal = self.job_collector.analyze_job_postings(company_info["name"], postings, company_id)
-            
-            self.db.insert_signal(
-                company_id=company_id,
-                category=job_signal.category.value,
-                source=job_signal.source.value,
-                signal_date=job_signal.signal_date,
-                raw_value=job_signal.raw_value,
-                normalized_score=job_signal.normalized_score,
-                confidence=job_signal.confidence,
-                metadata=job_signal.metadata
+            # Job posting signal (SerpAPI)
+            postings = self.job_collector.fetch_postings(
+                company_info["name"], api_key=settings.serpapi_key or None
             )
-            logger.info(f"   ✅ Hiring signal: {job_signal.normalized_score:.1f}")
-            signals_collected += 1
-            
-            # Technology stack signal
-            techs = self.tech_collector.create_sample_technologies(ai_maturity=ai_level)
-            tech_signal = self.tech_collector.analyze_tech_stack(company_id, techs)
-            
-            self.db.insert_signal(
-                company_id=company_id,
-                category=tech_signal.category.value,
-                source=tech_signal.source.value,
-                signal_date=tech_signal.signal_date,
-                raw_value=tech_signal.raw_value,
-                normalized_score=tech_signal.normalized_score,
-                confidence=tech_signal.confidence,
-                metadata=tech_signal.metadata
+            if postings:
+                job_signal = self.job_collector.analyze_job_postings(
+                    company_info["name"], postings, company_id
+                )
+                self.db.insert_signal(
+                    company_id=company_id,
+                    category=job_signal.category.value,
+                    source=job_signal.source.value,
+                    signal_date=job_signal.signal_date,
+                    raw_value=job_signal.raw_value,
+                    normalized_score=job_signal.normalized_score,
+                    confidence=job_signal.confidence,
+                    metadata=job_signal.metadata
+                )
+                hiring_score = job_signal.normalized_score
+                signals_collected += 1
+                logger.info(f"   ✅ Hiring signal: {job_signal.normalized_score:.1f}")
+
+            # Technology stack signal (BuiltWith)
+            techs = self.tech_collector.fetch_tech_stack(
+                domain, api_key=settings.builtwith_api_key or None
             )
-            logger.info(f"   ✅ Tech stack signal: {tech_signal.normalized_score:.1f}")
-            signals_collected += 1
-            
-            # Patent signal
-            patents = self.patent_collector.create_sample_patents(company_info["name"], ai_innovation=ai_level)
-            patent_signal = self.patent_collector.analyze_patents(company_id, patents)
-            
-            self.db.insert_signal(
-                company_id=company_id,
-                category=patent_signal.category.value,
-                source=patent_signal.source.value,
-                signal_date=patent_signal.signal_date,
-                raw_value=patent_signal.raw_value,
-                normalized_score=patent_signal.normalized_score,
-                confidence=patent_signal.confidence,
-                metadata=patent_signal.metadata
+            if techs:
+                tech_signal = self.tech_collector.analyze_tech_stack(company_id, techs)
+                self.db.insert_signal(
+                    company_id=company_id,
+                    category=tech_signal.category.value,
+                    source=tech_signal.source.value,
+                    signal_date=tech_signal.signal_date,
+                    raw_value=tech_signal.raw_value,
+                    normalized_score=tech_signal.normalized_score,
+                    confidence=tech_signal.confidence,
+                    metadata=tech_signal.metadata
+                )
+                digital_score = tech_signal.normalized_score
+                signals_collected += 1
+                logger.info(f"   ✅ Tech stack signal: {tech_signal.normalized_score:.1f}")
+
+            # Patent signal (Lens)
+            patents = self.patent_collector.fetch_patents(
+                company_info["name"], api_key=settings.lens_api_key or None
             )
-            logger.info(f"   ✅ Patent signal: {patent_signal.normalized_score:.1f}")
-            signals_collected += 1
-            
-            # Update summary
+            if patents:
+                patent_signal = self.patent_collector.analyze_patents(company_id, patents)
+                self.db.insert_signal(
+                    company_id=company_id,
+                    category=patent_signal.category.value,
+                    source=patent_signal.source.value,
+                    signal_date=patent_signal.signal_date,
+                    raw_value=patent_signal.raw_value,
+                    normalized_score=patent_signal.normalized_score,
+                    confidence=patent_signal.confidence,
+                    metadata=patent_signal.metadata
+                )
+                innovation_score = patent_signal.normalized_score
+                signals_collected += 1
+                logger.info(f"   ✅ Patent signal: {patent_signal.normalized_score:.1f}")
+
+            # Leadership signals (company website + optional LinkedIn)
+            leadership_collector = LeadershipSignalCollector()
+            website_data = leadership_collector.fetch_from_company_website(domain)
+            linkedin_data = leadership_collector.fetch_from_linkedin(
+                company_info["name"], api_key=settings.linkedin_api_key or None
+            )
+            leadership_signals = leadership_collector.analyze_leadership(
+                company_id, website_data=website_data, linkedin_data=linkedin_data
+            )
+            if not leadership_signals:
+                logger.info(
+                    f"   No leadership data for {ticker} (domain={domain!r}); "
+                    "check logs for leadership_fetch_no_page if website fetch failed."
+                )
+            leadership_score = 0.0
+            for sig in leadership_signals:
+                self.db.insert_signal(
+                    company_id=company_id,
+                    category=sig.category.value,
+                    source=sig.source.value,
+                    signal_date=sig.signal_date,
+                    raw_value=sig.raw_value,
+                    normalized_score=sig.normalized_score,
+                    confidence=sig.confidence,
+                    metadata=sig.metadata
+                )
+                leadership_score = max(leadership_score, sig.normalized_score)
+                signals_collected += 1
+                logger.info(f"   ✅ Leadership signal ({sig.source.value}): {sig.normalized_score:.1f}")
+
             self.db.upsert_signal_summary(
                 company_id=company_id,
                 ticker=ticker,
-                technology_hiring_score=job_signal.normalized_score,
-                innovation_activity_score=patent_signal.normalized_score,
-                digital_presence_score=tech_signal.normalized_score,
-                leadership_signals_score=50.0,  # Placeholder
+                technology_hiring_score=hiring_score,
+                innovation_activity_score=innovation_score,
+                digital_presence_score=digital_score,
+                leadership_signals_score=leadership_score,
                 signal_count=signals_collected
             )
-            
             self.stats["signals"] += signals_collected
-            
+
         except Exception as e:
             logger.error(f"   ❌ Error collecting signals: {e}")
             self.stats["errors"] += 1
-        
+
         return signals_collected
 
     def collect_for_company(

@@ -64,14 +64,14 @@ class BackfillResponse(BaseModel):
 
 # Target companies for this case study
 TARGET_COMPANIES = {
-    "CAT": {"name": "Caterpillar Inc.", "sector": "Manufacturing", "industry": "Manufacturing"},
-    "DE": {"name": "Deere & Company", "sector": "Manufacturing", "industry": "Manufacturing"},
-    "UNH": {"name": "UnitedHealth Group", "sector": "Healthcare", "industry": "Healthcare Services"},
-    "HCA": {"name": "HCA Healthcare", "sector": "Healthcare", "industry": "Healthcare Services"},
-    "ADP": {"name": "Automatic Data Processing", "sector": "Services", "industry": "Business Services"},
-    "PAYX": {"name": "Paychex Inc.", "sector": "Services", "industry": "Business Services"},
-    "WMT": {"name": "Walmart Inc.", "sector": "Consumer", "industry": "Retail"},
-    "TGT": {"name": "Target Corporation", "sector": "Consumer", "industry": "Retail"},
-    "JPM": {"name": "JPMorgan Chase", "sector": "Financial", "industry": "Financial Services"},
-    "GS": {"name": "Goldman Sachs", "sector": "Financial", "industry": "Financial Services"},
+    "CAT": {"name": "Caterpillar Inc.", "sector": "Manufacturing", "industry": "Manufacturing", "domain": "caterpillar.com"},
+    "DE": {"name": "Deere & Company", "sector": "Manufacturing", "industry": "Manufacturing", "domain": "deere.com"},
+    "UNH": {"name": "UnitedHealth Group", "sector": "Healthcare", "industry": "Healthcare Services", "domain": "unitedhealthgroup.com"},
+    "HCA": {"name": "HCA Healthcare", "sector": "Healthcare", "industry": "Healthcare Services", "domain": "hcahealthcare.com"},
+    "ADP": {"name": "Automatic Data Processing", "sector": "Services", "industry": "Business Services", "domain": "adp.com"},
+    "PAYX": {"name": "Paychex Inc.", "sector": "Services", "industry": "Business Services", "domain": "paychex.com"},
+    "WMT": {"name": "Walmart Inc.", "sector": "Consumer", "industry": "Retail", "domain": "walmart.com"},
+    "TGT": {"name": "Target Corporation", "sector": "Consumer", "industry": "Retail", "domain": "target.com"},
+    "JPM": {"name": "JPMorgan Chase", "sector": "Financial", "industry": "Financial Services", "domain": "jpmorganchase.com"},
+    "GS": {"name": "Goldman Sachs", "sector": "Financial", "industry": "Financial Services", "domain": "goldmansachs.com"},
 }

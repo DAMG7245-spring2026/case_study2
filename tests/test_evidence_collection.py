@@ -71,7 +71,8 @@ class TestSignalEndpoints:
         
         with patch("app.routers.signals.JobSignalCollector"), \
              patch("app.routers.signals.TechStackCollector"), \
-             patch("app.routers.signals.PatentSignalCollector"):
+             patch("app.routers.signals.PatentSignalCollector"), \
+             patch("app.routers.signals.LeadershipSignalCollector"):
             response = client.post("/api/v1/signals/collect", json={"company_id": company_id})
         
         assert response.status_code == 200
