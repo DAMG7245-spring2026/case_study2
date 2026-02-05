@@ -1,0 +1,90 @@
+PE Org-AI-R Platform Database Migrations
+========================================
+
+This directory contains Alembic migration scripts for managing database schema changes.
+
+## Prerequisites
+
+1. Install required packages:
+   ```bash
+   pip install alembic sqlalchemy snowflake-sqlalchemy snowflake-connector-python
+   ```
+
+2. Configure environment variables in `.env`:
+   ```
+   SNOWFLAKE_ACCOUNT=your_account
+   SNOWFLAKE_USER=your_username
+   SNOWFLAKE_PASSWORD=your_password
+   SNOWFLAKE_DATABASE=PE_ORG_AIR
+   SNOWFLAKE_SCHEMA=PUBLIC
+   SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+   ```
+
+## Common Commands
+
+### Create a new migration
+```bash
+alembic revision --autogenerate -m "Description of changes"
+```
+
+### Apply migrations
+```bash
+# Upgrade to latest version
+alembic upgrade head
+
+# Upgrade one version
+alembic upgrade +1
+
+# Upgrade to specific version
+alembic upgrade <revision_id>
+```
+
+### Rollback migrations
+```bash
+# Downgrade one version
+alembic downgrade -1
+
+# Downgrade to specific version
+alembic downgrade <revision_id>
+
+# Downgrade to base (remove all migrations)
+alembic downgrade base
+```
+
+### View migration history
+```bash
+# Show current version
+alembic current
+
+# Show all versions
+alembic history
+
+# Show version history with details
+alembic history --verbose
+```
+
+### Generate SQL without applying
+```bash
+alembic upgrade head --sql > migration.sql
+```
+
+## Initial Setup
+
+1. Create initial migration:
+   ```bash
+   alembic revision --autogenerate -m "Initial schema"
+   ```
+
+2. Review the generated migration in `alembic/versions/`
+
+3. Apply to database:
+   ```bash
+   alembic upgrade head
+   ```
+
+## Notes
+
+- Always review auto-generated migrations before applying
+- Test migrations in development environment first
+- Migrations are stored in `alembic/versions/`
+- Each migration has `upgrade()` and `downgrade()` functions
