@@ -1,10 +1,12 @@
 """Job posting signal collector."""
 import httpx
-from bs4 import BeautifulSoup
-import re
+import structlog
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from uuid import UUID
 from app.models.signal import ExternalSignal, SignalCategory, SignalSource
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -44,9 +46,55 @@ class JobSignalCollector:
             headers={"User-Agent": "Mozilla/5.0 (compatible; research)"}
         )
 
+    def fetch_postings(self, company_name: str, api_key: str | None = None) -> list["JobPosting"]:
+        """Fetch job postings from SerpApi (Google Jobs). Returns [] if no key or on failure."""
+        if not api_key or not api_key.strip():
+            logger.debug("job_fetch_skipped", reason="no_api_key", company=company_name)
+            return []
+        try:
+            url = "https://serpapi.com/search.json"
+            params = {
+                "engine": "google_jobs",
+                "q": f"{company_name} jobs",
+                "api_key": api_key,
+            }
+            r = self.client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+            jobs_data = data.get("jobs_results") or data.get("organic_results") or []
+            postings = []
+            for j in jobs_data[:50]:
+                title = j.get("title") or ""
+                desc = j.get("description") or j.get("snippet") or ""
+                company = j.get("company_name") or company_name
+                loc = (j.get("location") or [""])[0] if isinstance(j.get("location"), list) else (j.get("location") or "")
+                link = j.get("link") or j.get("apply_link") or ""
+                posted = j.get("posted_at") or j.get("date") if isinstance(j.get("posted_at"), str) else None
+                if not title and not desc:
+                    continue
+                p = JobPosting(
+                    title=title,
+                    company=company,
+                    location=loc,
+                    description=desc,
+                    posted_date=posted,
+                    source="serpapi_google_jobs",
+                    url=link,
+                    is_ai_related=False,
+                    ai_skills=[],
+                )
+                p = self.classify_posting(p)
+                postings.append(p)
+            logger.info("job_fetch_ok", company=company_name, count=len(postings))
+            return postings
+        except Exception as e:
+            logger.warning("job_fetch_failed", company=company_name, error=str(e))
+            return []
+
     def analyze_job_postings(
         self,
         company: str,
+        company_id: UUID,
         postings: list[JobPosting]
     ) -> ExternalSignal:
         """Analyze job postings to calculate hiring signal."""
@@ -76,7 +124,7 @@ class JobSignalCollector:
         )
 
         return ExternalSignal(
-            company_id=None,  # Set by caller
+            company_id=company_id,
             category=SignalCategory.TECHNOLOGY_HIRING,
             source=SignalSource.INDEED,
             signal_date=datetime.now(timezone.utc),

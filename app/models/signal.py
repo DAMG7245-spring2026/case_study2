@@ -19,7 +19,9 @@ class SignalSource(str, Enum):
     INDEED = "indeed"
     GLASSDOOR = "glassdoor"
     USPTO = "uspto"
+    LENS = "lens"
     BUILTWITH = "builtwith"
+    WAPPALYZER = "wappalyzer"
     PRESS_RELEASE = "press_release"
     COMPANY_WEBSITE = "company_website"
 

@@ -1,0 +1,18 @@
+# External Signals Report (Leadership Excluded)
+
+Generated: 2026-02-05 05:34 UTC
+
+Composite score uses only **Technology Hiring**, **Innovation Activity**, and **Digital Presence**. Leadership is excluded.
+
+| Ticker | Company | Tech Hiring | Innovation | Digital | Composite | Signals |
+|--------|---------|-------------|------------|---------|-----------|--------|
+| ADP | Automatic Data Processing | 0.0 | 10.0 | 0.0 | 3.1 | 4 |
+| CAT | Caterpillar Inc. | 18.8 | 0.0 | 0.0 | 7.0 | 18 |
+| DE | Deere & Company | 48.0 | 45.0 | 0.0 | 32.1 | 9 |
+| GS | Goldman Sachs | 2.0 | 0.0 | 0.0 | 0.7 | 9 |
+| HCA | HCA Healthcare | 0.0 | 45.0 | 0.0 | 14.1 | 9 |
+| JPM | JPMorgan Chase | 0.0 | 60.0 | 0.0 | 18.8 | 9 |
+| PAYX | Paychex Inc. | 2.0 | 0.0 | 0.0 | 0.7 | 9 |
+| TGT | Target Corporation | 80.0 | 15.0 | 0.0 | 34.7 | 9 |
+| UNH | UnitedHealth Group | 4.0 | 82.0 | 0.0 | 27.1 | 9 |
+| WMT | Walmart Inc. | 0.0 | 60.0 | 0.0 | 18.8 | 9 |

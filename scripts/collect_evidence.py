@@ -10,36 +10,45 @@ Usage:
 import argparse
 import asyncio
 from datetime import datetime, timezone
+from typing import Any
 import structlog
 from pathlib import Path
 import sys
 
 # Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+_project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_project_root))
+
+# Load .env from project root so API keys are available regardless of cwd
+from dotenv import load_dotenv
+load_dotenv(_project_root / ".env")
 
 from app.pipelines.sec_edgar import SECEdgarPipeline
 from app.pipelines.document_parser import DocumentParser, SemanticChunker
 from app.pipelines.job_signals import JobSignalCollector
 from app.pipelines.tech_signals import TechStackCollector
 from app.pipelines.patent_signals import PatentSignalCollector
+from app.config import get_settings
+from app.services.snowflake import SnowflakeService
+from app.models.document import DocumentRecord, DocumentStatus
 
 logger = structlog.get_logger()
 
 TARGET_COMPANIES = {
-    "CAT": {"name": "Caterpillar Inc.", "sector": "Manufacturing"},
-    "DE": {"name": "Deere & Company", "sector": "Manufacturing"},
-    "UNH": {"name": "UnitedHealth Group", "sector": "Healthcare"},
-    "HCA": {"name": "HCA Healthcare", "sector": "Healthcare"},
-    "ADP": {"name": "Automatic Data Processing", "sector": "Services"},
-    "PAYX": {"name": "Paychex Inc.", "sector": "Services"},
-    "WMT": {"name": "Walmart Inc.", "sector": "Retail"},
-    "TGT": {"name": "Target Corporation", "sector": "Retail"},
-    "JPM": {"name": "JPMorgan Chase", "sector": "Financial"},
-    "GS": {"name": "Goldman Sachs", "sector": "Financial"},
+    "CAT": {"name": "Caterpillar Inc.", "sector": "Manufacturing", "domain": "caterpillar.com"},
+    "DE": {"name": "Deere & Company", "sector": "Manufacturing", "domain": "deere.com"},
+    "UNH": {"name": "UnitedHealth Group", "sector": "Healthcare", "domain": "unitedhealthgroup.com"},
+    "HCA": {"name": "HCA Healthcare", "sector": "Healthcare", "domain": "hcahealthcare.com"},
+    "ADP": {"name": "Automatic Data Processing", "sector": "Services", "domain": "adp.com"},
+    "PAYX": {"name": "Paychex Inc.", "sector": "Services", "domain": "paychex.com"},
+    "WMT": {"name": "Walmart Inc.", "sector": "Retail", "domain": "walmart.com"},
+    "TGT": {"name": "Target Corporation", "sector": "Retail", "domain": "target.com"},
+    "JPM": {"name": "JPMorgan Chase", "sector": "Financial", "domain": "jpmorganchase.com"},
+    "GS": {"name": "Goldman Sachs", "sector": "Financial", "domain": "goldmansachs.com"},
 }
 
 
-async def collect_documents(ticker: str, pipeline: SECEdgarPipeline):
+async def collect_documents(ticker: str, company_id: Any, db: SnowflakeService, pipeline: SECEdgarPipeline):
     """Collect SEC documents for a company with rate limiting."""
     logger.info("collecting_documents", ticker=ticker)
 
@@ -71,9 +80,22 @@ async def collect_documents(ticker: str, pipeline: SECEdgarPipeline):
                 doc = parser.parse_filing(filing_path, ticker)
                 chunks = chunker.chunk_document(doc)
 
-                # TODO: Store in database
-                # await db.insert_document(doc)
-                # await db.insert_chunks(chunks)
+                # Store in database
+                doc_record = DocumentRecord(
+                    company_id=company_id,
+                    ticker=ticker,
+                    filing_type=doc.filing_type,
+                    filing_date=doc.filing_date,
+                    source_url=str(filing_path),
+                    local_path=str(filing_path),
+                    content_hash=doc.content_hash,
+                    word_count=doc.word_count,
+                    chunk_count=len(chunks),
+                    status=DocumentStatus.PARSED
+                )
+                
+                doc_id = await db.insert_document(doc_record)
+                await db.insert_chunks(doc_id, chunks)
 
                 total_chunks += len(chunks)
                 processed_docs += 1
@@ -104,39 +126,53 @@ async def collect_documents(ticker: str, pipeline: SECEdgarPipeline):
         return 0, 0, 0
 
 
-async def collect_signals(ticker: str):
-    """Collect external signals for a company."""
+async def collect_signals(ticker: str, company_id: Any, db: SnowflakeService):
+    """Collect external signals for a company. Skips a source when no API key or no data."""
     logger.info("Collecting signals", ticker=ticker)
-
+    settings = get_settings()
     signals = []
+    company_name = TARGET_COMPANIES[ticker]["name"]
+    domain = TARGET_COMPANIES[ticker].get("domain") or ""
 
-    # Job postings (simplified - in practice, use API)
+    # Job postings: fetch only when API key is set; skip if no data
     job_collector = JobSignalCollector()
-    # In real implementation, fetch actual job postings from API
-    # For now, create a placeholder signal
-    logger.info("Job signal collector initialized", ticker=ticker)
+    postings = job_collector.fetch_postings(company_name, api_key=settings.serpapi_key or None)
+    if postings:
+        job_signal = job_collector.analyze_job_postings(company=company_name, company_id=company_id, postings=postings)
+        signals.append(job_signal)
+    else:
+        logger.debug("job_signals_skipped", ticker=ticker, reason="no_data_or_no_key")
 
-    # Technology stack
+    # Technology stack: fetch only when API key and domain are set; skip if no data
     tech_collector = TechStackCollector()
-    # In real implementation, fetch from BuiltWith API
-    logger.info("Tech stack collector initialized", ticker=ticker)
+    technologies = tech_collector.fetch_tech_stack(domain, api_key=settings.builtwith_api_key or None) if domain else []
+    if technologies:
+        tech_signal = tech_collector.analyze_tech_stack(company_id=company_id, technologies=technologies)
+        signals.append(tech_signal)
+    else:
+        logger.debug("tech_signals_skipped", ticker=ticker, reason="no_data_or_no_key")
 
-    # Patents
+    # Patents: fetch from Lens.org when API key is set; skip if no data
     patent_collector = PatentSignalCollector()
-    # In real implementation, fetch from USPTO API
-    logger.info("Patent collector initialized", ticker=ticker)
+    patents = patent_collector.fetch_patents(company_name, api_key=settings.lens_api_key or None)
+    if patents:
+        patent_signal = patent_collector.analyze_patents(company_id=company_id, patents=patents)
+        signals.append(patent_signal)
+    else:
+        logger.debug("patent_signals_skipped", ticker=ticker, reason="no_data_or_no_key")
 
-    # TODO: Store signals in database
-    # for signal in signals:
-    #     await db.insert_signal(signal)
-    # await db.update_signal_summary(company_id)
+    # Store only signals we have; skip when we have none
+    for signal in signals:
+        await db.insert_signal(signal)
 
-    logger.info("Signal collection setup complete", ticker=ticker)
+    if signals:
+        await db.update_signal_summary(company_id)
 
-    return 3  # Placeholder for 3 signal types
+    logger.info("Signal collection complete", ticker=ticker, count=len(signals))
+    return len(signals)
 
 
-async def main(companies: list[str], use_batch: bool = True):
+async def main(companies: list[str], use_batch: bool = True, signals_only: bool = False):
     """Main collection routine with rate-limited batch processing."""
     stats = {
         "companies": 0,
@@ -147,19 +183,39 @@ async def main(companies: list[str], use_batch: bool = True):
         "errors": 0
     }
 
-    # Initialize SEC EDGAR pipeline once (shared across all downloads)
+    db = SnowflakeService()
     pipeline = SECEdgarPipeline(
-        company_name="Northeastern University",  # Replace with your institution
-        email="tu.wei@northeastern.edu",  # Replace with your email
+        company_name="Northeastern University",
+        email="tu.wei@northeastern.edu",
         download_dir=Path("data/raw/sec"),
-        rate_limit_buffer=0.1  # Conservative 100ms buffer for safety
+        rate_limit_buffer=0.1,
     )
-
     logger.info(
         "pipeline_initialized",
         rate_limit_buffer=pipeline.rate_limit_buffer,
-        max_requests_per_second=pipeline.MAX_REQUESTS_PER_SECOND
+        max_requests_per_second=pipeline.MAX_REQUESTS_PER_SECOND,
     )
+
+    # Signals-only mode: collect external signals for all companies, skip SEC documents
+    if signals_only:
+        logger.info("signals_only_mode", company_count=len(companies))
+        valid_tickers = [t for t in companies if t in TARGET_COMPANIES]
+        for ticker in valid_tickers:
+            try:
+                company = await db.get_or_create_company(
+                    ticker=ticker,
+                    name=TARGET_COMPANIES[ticker]["name"],
+                    sector=TARGET_COMPANIES[ticker]["sector"],
+                )
+                signal_count = await collect_signals(ticker, company.id, db)
+                stats["companies"] += 1
+                stats["signals"] += signal_count
+            except Exception as e:
+                logger.error("failed_to_process_company", ticker=ticker, error=str(e))
+                stats["errors"] += 1
+        pipeline_stats = pipeline.get_stats()
+        logger.info("collection_complete", **stats, total_api_requests=pipeline_stats["total_requests"], rate_limit_hits=pipeline_stats["rate_limit_hits"])
+        return stats, pipeline_stats
 
     # Option 1: Batch download (faster, uses download_batch method)
     if use_batch and len(companies) > 1:
@@ -187,11 +243,17 @@ async def main(companies: list[str], use_batch: bool = True):
                         sector=TARGET_COMPANIES[ticker]["sector"]
                     )
 
+                    # Get or create company in database
+                    company = await db.get_or_create_company(
+                        ticker=ticker,
+                        name=TARGET_COMPANIES[ticker]["name"],
+                        sector=TARGET_COMPANIES[ticker]["sector"]
+                    )
+
                     filings = results.get(ticker, [])
                     if not filings:
                         logger.warning("no_filings_downloaded", ticker=ticker)
-                        continue
-
+                    
                     # Parse and chunk documents
                     parser = DocumentParser()
                     chunker = SemanticChunker()
@@ -203,9 +265,22 @@ async def main(companies: list[str], use_batch: bool = True):
                             doc = parser.parse_filing(filing_path, ticker)
                             chunks = chunker.chunk_document(doc)
 
-                            # TODO: Store in database
-                            # await db.insert_document(doc)
-                            # await db.insert_chunks(chunks)
+                            # Store in database
+                            doc_record = DocumentRecord(
+                                company_id=company.id,
+                                ticker=ticker,
+                                filing_type=doc.filing_type,
+                                filing_date=doc.filing_date,
+                                source_url=str(filing_path),
+                                local_path=str(filing_path),
+                                content_hash=doc.content_hash,
+                                word_count=doc.word_count,
+                                chunk_count=len(chunks),
+                                status=DocumentStatus.PARSED
+                            )
+                            
+                            doc_id = await db.insert_document(doc_record)
+                            await db.insert_chunks(doc_id, chunks)
 
                             total_chunks += len(chunks)
                             processed_docs += 1
@@ -220,7 +295,7 @@ async def main(companies: list[str], use_batch: bool = True):
                             continue
 
                     # Collect signals
-                    signal_count = await collect_signals(ticker)
+                    signal_count = await collect_signals(ticker, company.id, db)
 
                     # Update stats
                     stats["companies"] += 1
@@ -254,14 +329,21 @@ async def main(companies: list[str], use_batch: bool = True):
                     sector=TARGET_COMPANIES[ticker]["sector"]
                 )
 
+                # Get or create company in database
+                company = await db.get_or_create_company(
+                    ticker=ticker,
+                    name=TARGET_COMPANIES[ticker]["name"],
+                    sector=TARGET_COMPANIES[ticker]["sector"]
+                )
+
                 # Collect documents
-                doc_count, chunk_count, processed_docs = await collect_documents(ticker, pipeline)
+                doc_count, chunk_count, processed_docs = await collect_documents(ticker, company.id, db, pipeline)
                 stats["documents"] += doc_count
                 stats["chunks"] += chunk_count
                 stats["processed_docs"] += processed_docs
 
                 # Collect signals
-                signal_count = await collect_signals(ticker)
+                signal_count = await collect_signals(ticker, company.id, db)
                 stats["signals"] += signal_count
 
                 stats["companies"] += 1
@@ -302,10 +384,15 @@ if __name__ == "__main__":
         action="store_true",
         help="Force sequential download mode (slower but more stable)"
     )
+    parser.add_argument(
+        "--signals-only",
+        action="store_true",
+        help="Collect only external signals (jobs, tech stack, patents) for all companies; skip SEC filings"
+    )
     args = parser.parse_args()
 
-    # Determine download mode
     use_batch = args.batch and not args.sequential
+    signals_only = getattr(args, "signals_only", False)
 
     if args.companies == "all":
         companies = list(TARGET_COMPANIES.keys())
@@ -316,11 +403,26 @@ if __name__ == "__main__":
     print("PE Org-AI-R Evidence Collection (Rate-Limited)")
     print(f"{'='*60}")
     print(f"Companies to process: {', '.join(companies)}")
-    print(f"Download mode: {'Batch' if use_batch else 'Sequential'}")
-    print(f"Rate limit: 10 requests/second (with safety buffer)")
+    if signals_only:
+        print("Mode: Signals only (no SEC documents)")
+    else:
+        print(f"Download mode: {'Batch' if use_batch else 'Sequential'}")
+        print(f"Rate limit: 10 requests/second (with safety buffer)")
+    # Show which external signal API keys are set (values hidden)
+    _s = get_settings()
+    serp_ok = bool((_s.serpapi_key or "").strip())
+    builtwith_ok = bool((_s.builtwith_api_key or "").strip())
+    lens_ok = bool((_s.lens_api_key or "").strip())
+    print("External APIs: SerpAPI={} BuiltWith={} Lens={}".format(
+        "set" if serp_ok else "not set",
+        "set" if builtwith_ok else "not set",
+        "set" if lens_ok else "not set",
+    ))
+    if not (serp_ok or builtwith_ok or lens_ok):
+        print("Hint: add SERPAPI_KEY, BUILTWITH_API_KEY, LENS_API_KEY to .env to fetch signals.")
     print(f"{'='*60}\n")
 
-    stats, pipeline_stats = asyncio.run(main(companies, use_batch=use_batch))
+    stats, pipeline_stats = asyncio.run(main(companies, use_batch=use_batch, signals_only=signals_only))
 
     print(f"\n{'='*60}")
     print("Collection Complete!")

@@ -1,5 +1,6 @@
 """Configuration management using Pydantic Settings."""
 from functools import lru_cache
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +42,12 @@ class Settings(BaseSettings):
     cache_ttl_industry: int = 3600  # 1 hour
     cache_ttl_assessment: int = 120  # 2 minutes
     cache_ttl_dimension_weights: int = 86400  # 24 hours
+
+    # External signals APIs (optional; if missing, that source is skipped)
+    # Use SERPAPI_KEY, BUILTWITH_API_KEY, LENS_API_KEY in .env (or alternate names below)
+    serpapi_key: str = Field(default="", validation_alias="SERPAPI_KEY")
+    builtwith_api_key: str = Field(default="", validation_alias="BUILTWITH_API_KEY")
+    lens_api_key: str = Field(default="", validation_alias="LENS_API_KEY")
 
 
 @lru_cache

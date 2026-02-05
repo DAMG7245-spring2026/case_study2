@@ -253,6 +253,13 @@ AWS_REGION=your_aws_region
 S3_BUCKET=your_bucket_name
 ```
 
+**Optional – External Signals (jobs, tech stack, patents):**  
+If set, the evidence collection script will fetch real data; if omitted, those sources are skipped.
+
+- `SERPAPI_KEY` – [SerpApi](https://serpapi.com/) (Google Jobs) for job postings
+- `BUILTWITH_API_KEY` – [BuiltWith Free API](https://api.builtwith.com/free-api#usage) for tech stack / digital presence. Get the key from the Free API product; 1 req/s limit.
+- `LENS_API_KEY` – [Lens.org](https://docs.api.lens.org/) patent API token for innovation/patent data (request access via Lens.org)
+
 ---
 
 ## Running the Application

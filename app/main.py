@@ -5,7 +5,16 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import get_settings
-from app.routers import health_router, companies_router, assessments_router, scores_router
+from app.routers import (
+    health_router,
+    companies_router,
+    assessments_router,
+    scores_router,
+    documents_router,
+    signals_router,
+    evidence_router,
+    report_router,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -71,7 +80,11 @@ def create_app() -> FastAPI:
     app.include_router(companies_router)
     app.include_router(assessments_router)
     app.include_router(scores_router)
-    
+    app.include_router(documents_router)
+    app.include_router(signals_router)
+    app.include_router(evidence_router)
+    app.include_router(report_router)
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
