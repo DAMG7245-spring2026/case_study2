@@ -32,6 +32,8 @@ docker run -d --name redis-local -p 6379:6379 redis:7-alpine
 poetry run uvicorn app.main:app --reload
 ```
 
+**Data:** The `data/` directory is used at runtime for transient SEC EDGAR downloads and local artifacts (e.g. `data/evidence_summary.json`); it is gitignored. Snowflake (and S3) are the source of truth for filing data.
+
 ---
 
 ## Configuration Guide
