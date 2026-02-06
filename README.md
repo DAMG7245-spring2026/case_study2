@@ -6,7 +6,6 @@ AI Readiness Assessment Platform for Private Equity Portfolio Companies with aut
 
 - FastAPI public URL: http://35.93.9.162:8000/docs
 - Demo video link: https://www.youtube.com/watch?v=ATQqYbEYGnM
-- Codelabs Url: https://codelabs-preview.appspot.com/?file_id=1fvmgdoeoi5ahQraGPFOCGA46rybOITCttbJrc7A0riQ#0
 
 ## 🎯 Project Overview
 
