@@ -1,292 +1,296 @@
-# PE Org-AI-R Platform
+# PE Org-AI-R Platform - Case Study 2: Evidence Collection
 
+AI Readiness Assessment Platform for Private Equity Portfolio Companies with automated SEC filings collection and external operational signals analysis.
 
-## Prerequisites
+## 🎯 Project Overview
 
-- **Python 3.11+**
-- **Poetry** (dependency management)
-- **Docker & Docker Compose**
-- **Snowflake account** (free trial available)
-- **AWS account** (for S3, free tier available)
+This platform automates the collection and analysis of evidence for AI readiness assessment across multiple portfolio companies. It combines:
+
+- **SEC Filings Analysis**: Automated download, parsing, and section-aware chunking of 10-K, 10-Q, and 8-K filings
+- **External Signals Collection**: Real-time operational metrics from jobs, tech stack, patents, and leadership data
+- **Composite Scoring**: Weighted AI readiness scores across 4 signal categories
+- **Cloud Storage**: Snowflake for structured data, optional S3 for raw document archival
+
+### System Architecture
+
+![Case Study 2 Architecture](docs/damg_case_study_arch.png)
+
+### Target Companies (10)
+
+| Ticker | Company Name              | Industry            |
+| ------ | ------------------------- | ------------------- |
+| ADP    | Automatic Data Processing | Business Services   |
+| CAT    | Caterpillar Inc.          | Manufacturing       |
+| DE     | Deere & Company           | Manufacturing       |
+| GS     | Goldman Sachs             | Financial Services  |
+| HCA    | HCA Healthcare            | Healthcare Services |
+| JPM    | JPMorgan Chase            | Financial Services  |
+| PAYX   | Paychex Inc.              | Business Services   |
+| TGT    | Target Corporation        | Retail              |
+| UNH    | UnitedHealth Group        | Healthcare Services |
+| WMT    | Walmart Inc.              | Retail              |
 
 ---
 
-## Quick Start
+## 📋 Prerequisites
+
+- **Python 3.11+** (project uses Python 3.11+ features)
+- **Poetry 1.5+** for dependency management
+  - Install: `curl -sSL https://install.python-poetry.org | python3 -`
+- **Docker** (for Redis)
+- **Snowflake account** with database and warehouse
+  - Free trial: https://signup.snowflake.com/
+- **AWS S3** (optional - for raw filing storage)
+
+### Optional API Keys (for External Signals)
+
+- **SERPAPI_KEY**: [SerpApi](https://serpapi.com/) for job postings data
+- **BUILTWITH_API_KEY**: [BuiltWith Free API](https://api.builtwith.com/free-api) for tech stack
+- **LENS_API_KEY**: [Lens.org](https://docs.api.lens.org/) for patent data
+- **LINKEDIN_API_KEY**: Third-party API for leadership signals (optional)
+
+**Note:** Pipeline runs with graceful degradation if API keys are missing.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
 # 1. Clone the repository
-cd folder name
+git clone <REPO_URL>
+cd case_study2
 
-# 2. Install Poetry (if not installed)
-
-# 3. Install dependencies
+# 2. Install dependencies
 poetry install
 
-# 4. Configure environment
+# 3. Configure environment (see Configuration section below)
+
 # Edit .env with your credentials
 
-# 5. Start Redis
+# 4. Start Redis
 docker run -d --name redis-local -p 6379:6379 redis:7-alpine
 
-# 6. Run the application
+# 5. Run database migrations
+poetry run alembic upgrade head
+
+# 6. Start the API server
 poetry run uvicorn app.main:app --reload
+
+# 7. Access interactive docs
+# Open: http://127.0.0.1:8000/docs
 ```
 
-**Data:** The `data/` directory is used at runtime for transient SEC EDGAR downloads and local artifacts (e.g. `data/evidence_summary.json`); it is gitignored. Snowflake (and S3) are the source of truth for filing data.
+**Verify setup:**
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Expected: {"status": "healthy", "version": "1.0.0"}
+```
 
 ---
 
-## Configuration Guide
+## ⚙️ Configuration
 
 ### 1. Snowflake Setup
 
-#### Step 1: Create a Snowflake Account
-
-1. Go to [https://signup.snowflake.com/](https://signup.snowflake.com/)
-2. Sign up for a **free 30-day trial**
-3. Choose your cloud provider (AWS/Azure/GCP) and region
-4. Complete registration and verify your email
-
-#### Step 2: Get Your Account Identifier
-
-
-#### Step 3: Create Database and Tables
-
-1. Log in to Snowflake Web UI
-2. Click **"Worksheets"** → **"+"** to create a new worksheet
-3. Execute the following SQL **step by step**:
+#### Create Database and Warehouse
 
 ```sql
--- Step 1: Create Warehouse and Database
+-- Connect to Snowflake Web UI: https://app.snowflake.com/
+
+-- 1. Create warehouse
 CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH WITH WAREHOUSE_SIZE = 'XSMALL';
 USE WAREHOUSE COMPUTE_WH;
+
+-- 2. Create database and schema
 CREATE DATABASE IF NOT EXISTS PE_ORG_AIR;
 USE DATABASE PE_ORG_AIR;
 USE SCHEMA PUBLIC;
+
+-- 3. Verify setup
+SHOW DATABASES;
+SHOW WAREHOUSES;
 ```
 
-```sql
--- Step 2: Create Tables
-CREATE OR REPLACE TABLE industries (
-    id VARCHAR(36) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    sector VARCHAR(100) NOT NULL,
-    h_r_base DECIMAL(5,2),
-    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
-
-CREATE OR REPLACE TABLE companies (
-    id VARCHAR(36) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    ticker VARCHAR(10),
-    industry_id VARCHAR(36),
-    position_factor DECIMAL(4,3) DEFAULT 0.0,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    updated_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
-
-CREATE OR REPLACE TABLE assessments (
-    id VARCHAR(36) PRIMARY KEY,
-    company_id VARCHAR(36) NOT NULL,
-    assessment_type VARCHAR(20) NOT NULL,
-    assessment_date DATE NOT NULL,
-    status VARCHAR(20) DEFAULT 'draft',
-    primary_assessor VARCHAR(255),
-    secondary_assessor VARCHAR(255),
-    v_r_score DECIMAL(5,2),
-    confidence_lower DECIMAL(5,2),
-    confidence_upper DECIMAL(5,2),
-    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
-
-CREATE OR REPLACE TABLE dimension_scores (
-    id VARCHAR(36) PRIMARY KEY,
-    assessment_id VARCHAR(36) NOT NULL,
-    dimension VARCHAR(30) NOT NULL,
-    score DECIMAL(5,2) NOT NULL,
-    weight DECIMAL(4,3),
-    confidence DECIMAL(4,3) DEFAULT 0.8,
-    evidence_count INT DEFAULT 0,
-    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
-```
+#### Insert Seed Data (Industries)
 
 ```sql
--- Step 3: Insert Seed Data
+-- Required for company foreign key relationships
 INSERT INTO industries (id, name, sector, h_r_base) VALUES
     ('550e8400-e29b-41d4-a716-446655440001', 'Manufacturing', 'Industrials', 72),
     ('550e8400-e29b-41d4-a716-446655440002', 'Healthcare Services', 'Healthcare', 78),
     ('550e8400-e29b-41d4-a716-446655440003', 'Business Services', 'Services', 75),
-    ('550e8400-e29b-41d4-a716-446655440004', 'Retail', 'Consumer', 70),
     ('550e8400-e29b-41d4-a716-446655440005', 'Financial Services', 'Financial', 80),
-    ('550e8400-e29b-41d4-a716-446655440006', 'Technology', 'Technology', 85),
-    ('550e8400-e29b-41d4-a716-446655440007', 'Energy', 'Energy', 68),
-    ('550e8400-e29b-41d4-a716-446655440008', 'Real Estate', 'Real Estate', 65);
+    ('550e8400-e29b-41d4-a716-446655440004', 'Retail', 'Consumer', 70);
+
+-- Verify
+SELECT * FROM industries;
 ```
 
-```sql
--- Step 4: Verify Setup
-SELECT * FROM industries;  -- Should show 8 rows
-```
-
-#### Step 4: Update .env File
+#### Run Alembic Migrations
 
 ```bash
-SNOWFLAKE_ACCOUNT=XXXXX-YYYYY        # Your account identifier
-SNOWFLAKE_USER=your_username          # Your login username
-SNOWFLAKE_PASSWORD=your_password      # Your password
-SNOWFLAKE_DATABASE=
-SNOWFLAKE_SCHEMA=
-SNOWFLAKE_WAREHOUSE=
+# Apply all migrations (creates tables: documents, document_chunks, external_signals, etc.)
+poetry run alembic upgrade head
+
+# Check current migration
+poetry run alembic current
+
+# Expected output: 003_add_company_signal_summaries (head)
 ```
 
----
+### 2. Environment Variables
 
-### 2. Redis Setup
-
-Redis is used for caching to improve API performance.
-
-#### Option A: Using Docker (Recommended)
-
-```bash
-# Start Redis container
-docker run -d --name redis-local -p 6379:6379 redis:7-alpine
-
-# Verify it's running
-docker ps
-```
-
-#### Option B: Using Docker Compose
-
-Redis is included in `docker-compose.yml` and will start automatically:
-
-```bash
-cd docker
-docker-compose --env-file ../.env up
-```
-
-#### Update .env File
-
-```bash
-REDIS_HOST=localhost    # Use 'redis' if running with docker-compose
-REDIS_PORT=6379
-REDIS_DB=0
-```
-
-### 3. AWS S3 Setup
-
-S3 is used for document storage (SEC filings, reports, etc.).
-
-#### Step 1: Create an AWS Account
-
-1. Go to [https://aws.amazon.com/](https://aws.amazon.com/)
-2. Click **"Create an AWS Account"**
-3. Complete the registration process
-
-#### Step 2: Create an S3 Bucket
-
-1. Log in to **AWS Console**
-2. Search for **"S3"** and click to enter
-3. Click **"Create bucket"**
-4. Configure:
-   - **Bucket name**: `yourname` (must be globally unique)
-   - **AWS Region**: `us-east-1` (or your preferred region)
-5. Keep other settings as default
-6. Click **"Create bucket"**
-
-#### Step 3: Create IAM User and Access Keys
-
-1. In AWS Console, search for **"IAM"**
-2. Click **"Users"** → **"Create user"**
-3. **User name**: `your name`
-4. Click **"Next"**
-5. Select **"Attach policies directly"**
-6. Search and select **`AmazonS3FullAccess`**
-7. Click **"Next"** → **"Create user"**
-
-8. Click on the created user → **"Security credentials"** tab
-9. Scroll to **"Access keys"** → **"Create access key"**
-10. Select **"Local code"** → **"Next"**
-11. Click **"Create access key"**
-12. **⚠️ IMPORTANT**: Copy and save both:
-    - **Access key ID**: `.......`
-    - **Secret access key**: `xxxxxxxx`
-    
-    > The secret key is shown only once!
-
----
-
-## Environment Variables
-
-Create a `.env` file in the project root:
+Create `.env` file in project root:
 
 ```bash
 # ==============================================
-# Application Settings
+# Application
 # ==============================================
 APP_NAME="PE Org-AI-R Platform"
 APP_VERSION="1.0.0"
 DEBUG=true
 
 # ==============================================
-# Snowflake Configuration
+# Snowflake (REQUIRED)
 # ==============================================
-SNOWFLAKE_ACCOUNT=XXXXX-YYYYY
+SNOWFLAKE_ACCOUNT=xy12345.us-east-1  # Your account identifier
 SNOWFLAKE_USER=your_username
 SNOWFLAKE_PASSWORD=your_password
-SNOWFLAKE_DATABASE=your_database_name
-SNOWFLAKE_SCHEMA=
-SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_DATABASE=PE_ORG_AIR
+SNOWFLAKE_SCHEMA=PUBLIC
+SNOWFLAKE_WAREHOUSE=COMPUTE_WH
 
 # ==============================================
-# Redis Configuration
+# Redis (REQUIRED for API caching)
 # ==============================================
-REDIS_HOST=localhost    # Use 'redis' if running with docker-compose
+REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_DB=0
 
 # ==============================================
-# AWS S3 Configuration
+# AWS S3 (OPTIONAL - for raw filing storage)
 # ==============================================
-AWS_ACCESS_KEY_ID=your_aws_access_key_id
-AWS_SECRET_ACCESS_KEY=your_secret_key
-AWS_REGION=your_aws_region
-S3_BUCKET=your_bucket_name
+AWS_ACCESS_KEY_ID=your_access_key_id
+AWS_SECRET_ACCESS_KEY=your_secret_access_key
+AWS_REGION=us-east-1
+S3_BUCKET=your-bucket-name
+
+# ==============================================
+# External API Keys (OPTIONAL - graceful degradation)
+# ==============================================
+# SerpAPI for job postings (technology_hiring signals)
+SERPAPI_KEY=your_serpapi_key
+
+# BuiltWith for tech stack (digital_presence signals)
+BUILTWITH_API_KEY=your_builtwith_key
+
+# Lens.org for patents (innovation_activity signals)
+LENS_API_KEY=your_lens_token
+
+# LinkedIn API for leadership (leadership_signals - optional)
+LINKEDIN_API_KEY=your_linkedin_key
 ```
 
-**S3 is optional:** If these are empty, SEC filings are still downloaded, parsed, and stored in Snowflake; only the S3 copy is skipped. If you see `SignatureDoesNotMatch` when uploading, check: no trailing spaces/newlines in `AWS_SECRET_ACCESS_KEY`, correct `AWS_ACCESS_KEY_ID`, and `AWS_REGION` matching your bucket.
+**Important:**
 
-**Optional – External Signals (jobs, tech stack, patents):**  
-If set, the evidence collection script will fetch real data; if omitted, those sources are skipped.
+- ❌ Do NOT commit `.env` to Git (already in `.gitignore`)
+- ❌ Do NOT commit large SEC filings to Git
+- ✅ Use `.env.example` as a template
 
-- `SERPAPI_KEY` – [SerpApi](https://serpapi.com/) (Google Jobs) for job postings
-- `BUILTWITH_API_KEY` – [BuiltWith Free API](https://api.builtwith.com/free-api#usage) for tech stack / digital presence. Get the key from the Free API product; 1 req/s limit.
-- `LENS_API_KEY` – [Lens.org](https://docs.api.lens.org/) patent API token for innovation/patent data (request access via Lens.org)
-- `LINKEDIN_API_KEY` – (optional) Third-party LinkedIn company/exec data API (e.g. RapidAPI). If set, leadership signals can include LinkedIn-sourced data; if omitted, leadership signals use only the company website (about/leadership pages).
+### 3. Redis Setup
+
+```bash
+# Option 1: Docker (Recommended)
+docker run -d --name redis-local -p 6379:6379 redis:7-alpine
+
+# Verify
+docker ps | grep redis
+
+# Option 2: Docker Compose
+cd docker
+docker-compose --env-file ../.env up -d
+```
 
 ---
 
-## Running the Application
+## 📊 Evidence Collection
 
-### Option 1: Local Development
+### Using FastAPI Endpoints (Recommended)
+
+**1. Start the API server:**
 
 ```bash
-# Make sure Redis is running
-docker run -d --name redis-local -p 6379:6379 redis:7-alpine
-
-# Start the API
 poetry run uvicorn app.main:app --reload
 ```
 
-### Option 2: Docker Compose
+**2. Trigger evidence collection via API:**
 
 ```bash
-# Start all services
-cd docker
-docker-compose --env-file ../.env up --build
+# Collect SEC documents + external signals for specific companies
+curl -X POST "http://localhost:8000/api/v1/evidence/backfill" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tickers": ["JPM", "WMT", "GS"],
+    "include_documents": true,
+    "include_signals": true,
+    "years_back": 3
+  }'
+
+# Response:
+# {
+#   "task_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+#   "status": "queued",
+#   "companies_queued": 3,
+#   "message": "Backfill started for 3 companies: JPM, WMT, GS"
+# }
 ```
 
+**3. Monitor progress:**
+
+```bash
+# Check overall statistics
+curl "http://localhost:8000/api/v1/evidence/stats"
+
+# View target companies
+curl "http://localhost:8000/api/v1/target-companies"
+
+# Get documents for a company
+curl "http://localhost:8000/api/v1/documents?ticker=JPM"
+```
+
+### Using Command Line Script
+
+```bash
+# Collect for specific companies (documents + signals)
+poetry run python scripts/collect_evidence.py --companies JPM,WMT,GS
+
+# Documents only (faster)
+poetry run python scripts/collect_evidence.py --companies CAT,DE,UNH --documents-only
+
+# Signals only (no SEC downloads)
+poetry run python scripts/collect_evidence.py --companies all --signals-only
+
+# Custom parameters
+poetry run python scripts/collect_evidence.py \
+  --companies ADP,PAYX \
+  --years-back 2 \
+  --email your.email@university.edu
+```
+
+**Script Options:**
+
+- `--companies <TICKERS>` – Comma-separated tickers or "all" (default: all 10 companies)
+- `--documents-only` – Only collect SEC filings (skip external signals)
+- `--signals-only` – Only collect external signals (skip SEC)
+- `--years-back <N>` – Years of historical filings (default: 3, range: 1-10)
+- `--email <EMAIL>` – SEC EDGAR email (default: student@university.edu)
+
+---
+
+## 📚 API Documentation
 
 ### Interactive Documentation
 
@@ -294,12 +298,377 @@ docker-compose --env-file ../.env up --build
 - **ReDoc**: http://127.0.0.1:8000/redoc
 - **OpenAPI JSON**: http://127.0.0.1:8000/openapi.json
 
----
+### Key Endpoints
 
-## Testing
-
-### Run All Tests
+#### Evidence Collection
 
 ```bash
-poetry run pytest
+# Trigger evidence collection (background task)
+POST /api/v1/evidence/backfill
+Body: {
+  "tickers": ["JPM", "WMT"],      # Optional: omit for all companies
+  "include_documents": true,       # Collect SEC filings
+  "include_signals": true,         # Collect external signals
+  "years_back": 3                  # Historical data range
+}
+
+# Get evidence statistics
+GET /api/v1/evidence/stats
+
+# Get company evidence (documents + signals)
+GET /api/v1/companies/{company_id}/evidence
+
+# Get target companies list
+GET /api/v1/target-companies
 ```
+
+#### Documents
+
+```bash
+# List documents
+GET /api/v1/documents?ticker=JPM&limit=10
+
+# Get document chunks
+GET /api/v1/documents/{document_id}/chunks
+```
+
+#### Signals
+
+```bash
+# List signals for a company
+GET /api/v1/signals?company_id={company_id}
+
+# Get signal summary with composite score
+GET /api/v1/companies/{company_id}/signals
+```
+
+#### Health Check
+
+```bash
+GET /health
+# Response: {"status": "healthy", "version": "1.0.0"}
+```
+
+---
+
+## 🗄️ Database Schema
+
+### Core Tables (Alembic Migrations)
+
+**Migration 001: Core Tables**
+
+- `industries` – Industry baselines and sectors
+- `companies` – Portfolio company information
+- `assessments` – AI readiness assessment records
+- `dimension_scores` – Detailed dimension-level scores
+
+**Migration 002: Case Study 2 Extensions**
+
+- `documents` – SEC filings metadata (10-K, 10-Q, 8-K)
+- `document_chunks` – Section-aware text segments (~1000 words)
+- `external_signals` – Operational readiness indicators
+
+**Migration 003: Signal Summaries**
+
+- `company_signal_summaries` – Aggregated AI readiness scores
+
+### Key Tables Details
+
+**documents:**
+
+- Stores SEC filing metadata and status
+- Fields: `id`, `company_id`, `ticker`, `filing_type`, `filing_date`, `content_hash`, `word_count`, `chunk_count`, `status`, `s3_key`
+- Deduplication via `content_hash`
+
+**document_chunks:**
+
+- Section-aware text segments for LLM processing
+- Fields: `id`, `document_id`, `chunk_index`, `content`, `section`, `start_char`, `end_char`, `word_count`
+- Section examples: `item_1`, `item_1a`, `item_7`, `item_7a`
+
+**external_signals:**
+
+- Operational readiness metrics
+- Fields: `id`, `company_id`, `category`, `source`, `signal_date`, `normalized_score` (0-100), `confidence` (0-1), `metadata` (JSON)
+- Categories: `technology_hiring`, `digital_presence`, `innovation_activity`, `leadership_signals`
+
+**company_signal_summaries:**
+
+- Aggregated scores per company
+- Fields: `company_id`, `ticker`, `technology_hiring_score`, `digital_presence_score`, `innovation_activity_score`, `leadership_signals_score`, `composite_score`, `signal_count`, `last_updated`
+- Composite score weights: hiring 30%, digital 25%, innovation 25%, leadership 20%
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+poetry run pytest
+
+# Run with coverage
+poetry run pytest --cov=app --cov-report=term-missing
+
+# Run specific test file
+poetry run pytest tests/test_document_chunker.py -v
+
+# Run tests matching pattern
+poetry run pytest -k "test_chunk" -v
+```
+
+---
+
+## 🔍 Data Validation
+
+### Snowflake Queries
+
+**Check document collection status:**
+
+```sql
+SELECT
+    ticker,
+    filing_type,
+    COUNT(*) as document_count,
+    SUM(chunk_count) as total_chunks,
+    MAX(filing_date) as latest_filing
+FROM documents
+WHERE ticker IN ('ADP', 'CAT', 'DE', 'GS', 'HCA', 'JPM', 'PAYX', 'TGT', 'UNH', 'WMT')
+GROUP BY ticker, filing_type
+ORDER BY ticker, filing_type;
+```
+
+**Check signal collection:**
+
+```sql
+SELECT
+    c.ticker,
+    COUNT(DISTINCT es.id) as signal_count,
+    css.composite_score
+FROM companies c
+LEFT JOIN external_signals es ON c.id = es.company_id
+LEFT JOIN company_signal_summaries css ON c.id = css.company_id
+WHERE c.ticker IN ('ADP', 'CAT', 'DE', 'GS', 'HCA', 'JPM', 'PAYX', 'TGT', 'UNH', 'WMT')
+GROUP BY c.ticker, css.composite_score
+ORDER BY css.composite_score DESC;
+```
+
+**Verify section-aware chunking:**
+
+```sql
+SELECT
+    d.ticker,
+    d.filing_type,
+    c.section,
+    COUNT(*) as chunk_count
+FROM document_chunks c
+JOIN documents d ON c.document_id = d.id
+WHERE d.ticker = 'JPM'
+GROUP BY d.ticker, d.filing_type, c.section
+ORDER BY d.filing_type, c.section;
+```
+
+---
+
+## 🛠️ Development
+
+### Project Structure
+
+```
+case_study2/
+├── app/
+│   ├── config.py                   # Settings (Snowflake, Redis, APIs)
+│   ├── main.py                     # FastAPI application
+│   ├── database/
+│   │   ├── orm/                    # SQLAlchemy models
+│   │   │   ├── document.py
+│   │   │   ├── document_chunk.py
+│   │   │   ├── external_signal.py
+│   │   │   └── company_signal_summary.py
+│   │   └── connection.py           # Snowflake connection
+│   ├── models/
+│   │   ├── document.py             # Pydantic models
+│   │   ├── signal.py
+│   │   └── evidence.py             # TARGET_COMPANIES
+│   ├── pipelines/
+│   │   ├── sec_edgar.py            # SEC downloader
+│   │   ├── document_parser.py      # iXBRL cleaning + section extraction
+│   │   ├── document_chunker.py     # Semantic chunking
+│   │   ├── job_signals.py          # SerpAPI + careers page
+│   │   ├── tech_signals.py         # BuiltWith API
+│   │   ├── patent_signals.py       # Lens.org API
+│   │   └── leadership_signals.py   # Website scraping
+│   ├── routers/
+│   │   ├── evidence.py             # /api/v1/evidence/*
+│   │   ├── documents.py            # /api/v1/documents/*
+│   │   └── signals.py              # /api/v1/signals/*
+│   └── services/
+│       ├── snowflake.py            # Database operations
+│       └── s3_storage.py           # S3 uploads
+├── scripts/
+│   ├── collect_evidence.py         # CLI evidence collection
+│   ├── backfill_companies.py       # Seed company data
+│   └── generate_report.py          # Generate assessment reports
+├── alembic/
+│   ├── env.py                      # Alembic environment
+│   └── versions/                   # Migration files
+│       ├── 001_initial_core_tables.py
+│       ├── 002_case_study_2_extensions.py
+│       └── 003_add_company_signal_summaries.py
+├── tests/
+│   ├── test_document_parser.py
+│   ├── test_document_chunker.py
+│   └── ...
+├── data/                           # Gitignored runtime data
+│   ├── raw/sec/                    # Transient SEC downloads
+│   └── evidence_summary.json       # Collection statistics
+├── pyproject.toml                  # Poetry dependencies
+├── alembic.ini                     # Alembic configuration
+└── README.md
+```
+
+### Adding New Companies
+
+Edit `app/models/evidence.py`:
+
+```python
+TARGET_COMPANIES = {
+    "TICKER": {
+        "name": "Company Name",
+        "sector": "Sector",
+        "industry": "Industry",
+        "domain": "company.com",
+        "careers_url": "https://careers.company.com",  # Optional
+        "leadership_url": "https://company.com/leadership",  # Optional
+    },
+}
+```
+
+Then run:
+
+```bash
+poetry run python scripts/backfill_companies.py
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Snowflake Connection Issues
+
+```bash
+# Test connection
+poetry run alembic current
+
+# Resume suspended warehouse
+snowsql -a <account> -u <user>
+> ALTER WAREHOUSE COMPUTE_WH RESUME;
+```
+
+### SEC Download Failures
+
+- **Error 403**: Set valid `--email` parameter (SEC requirement)
+- **No filings**: Check date range with `--years-back`
+- **Rate limiting**: SEC allows 10 req/s; script respects limits
+
+### Missing Sections in Chunks
+
+- **Symptom**: All chunks have `section=NULL` or empty string
+- **Cause**: Regex patterns not matching filing format
+- **Fix**: Check parser logs for section extraction errors
+
+### S3 Upload Errors
+
+```bash
+# SignatureDoesNotMatch
+# Cause: Trailing spaces in AWS_SECRET_ACCESS_KEY
+# Fix: Check .env file has no trailing whitespace
+
+# Bucket region mismatch
+# Fix: Ensure AWS_REGION matches bucket region
+aws s3api get-bucket-location --bucket <bucket-name>
+```
+
+### API Keys Missing (Graceful Degradation)
+
+- **Symptom**: Logs show "SERPAPI_KEY not set, skipping technology_hiring signals"
+- **Behavior**: Pipeline continues with remaining signal categories
+- **Fix**: Add missing API keys to `.env` or accept reduced signal coverage
+
+---
+
+## 📝 License
+
+[Add your license here]
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📧 Contact
+
+For questions or support, please contact [your-email@example.com]
+
+---
+
+## 🎓 Case Study 2 Deliverables
+
+This project is part of the PE Org-AI-R Platform Case Study 2. For submission requirements and detailed documentation, see:
+
+- **Codelab**: `CS2_Evidence_Collection_Codelab.md`
+- **Architecture**: System design and data flow diagrams
+- **Validation**: SQL queries and expected results
+- **Demo Video**: End-to-end pipeline walkthrough
+
+**Key Metrics:**
+
+- ✅ 10 target companies across 5 industries
+- ✅ 4 signal categories with normalized scoring
+- ✅ Section-aware document chunking (~1000 words)
+- ✅ Composite AI readiness scores (0-100 scale)
+- ✅ Background task processing via FastAPI
+- ✅ Snowflake + S3 cloud storage
+- ✅ Graceful API key degradation
+
+---
+
+## 👥 Team Member Contributions
+
+| Team Member      | Contribution             | Key Components                                                                |
+| ---------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| **WEI CHENG TU** | SEC EDGAR Pipeline       | SEC downloader, document parser, section extraction, semantic chunking        |
+| **Nisarg Sheth** | External Signal Pipeline | Job signals, tech stack, patent signals, leadership signals, scoring logic    |
+| **YU TZU LI**    | API Endpoints            | FastAPI routers, background tasks, evidence collection API, database services |
+
+### Individual Responsibilities
+
+**WEI CHENG TU:**
+
+- Implemented `SECEdgarPipeline` for automated filing downloads
+- Built `DocumentParser` with iXBRL/XBRL noise removal
+- Designed section-aware extraction for 10-K, 10-Q, 8-K forms
+- Developed `SemanticChunker` with 1000-word overlapping segments
+- Created Alembic migrations for `documents` and `document_chunks` tables
+
+**Nisarg Sheth:**
+
+- Built `JobSignalCollector` with SerpAPI and careers page integration
+- Implemented `TechStackCollector` using BuiltWith API
+- Developed `PatentSignalCollector` with Lens.org API
+- Created `LeadershipSignalCollector` with website scraping
+- Designed normalized scoring (0-100) and confidence metrics (0-1)
+- Implemented composite score calculation with category weights
+
+**YU TZU LI:**
+
+- Design high-level system architecture
+- Created Snowflake service layer for database operations
+- Developed S3 storage service for raw filing archival
+- Integrated all pipeline components into unified API
