@@ -54,6 +54,7 @@ def main():
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     # Aggregate metrics (Summary Statistics)
+    stats = {}
     try:
         stats = db.get_evidence_stats()
         companies_processed = len(rows)
@@ -113,7 +114,102 @@ def main():
         if ticker and ticker not in doc_by_company:
             doc_by_company[ticker] = {"10-K": 0, "10-Q": 0, "8-K": 0, "total": 0, "chunks": 0}
 
-    # Markdown report: three sections (committed to repo in docs/)
+    # --- Key Findings (data-driven) ---
+    findings_say_do = []
+    if signal_rows:
+        avg_composite = sum(r["composite_score"] for r in signal_rows) / len(signal_rows)
+        avg_docs = sum(doc_by_company.get(r["ticker"], {}).get("total", 0) for r in signal_rows) / len(signal_rows)
+        high_disc_low_action = [
+            r["ticker"] for r in signal_rows
+            if doc_by_company.get(r["ticker"], {}).get("total", 0) >= avg_docs and r["composite_score"] < avg_composite
+        ]
+        if high_disc_low_action:
+            findings_say_do.append(
+                f"{len(high_disc_low_action)} companies have above-average document count but below-average composite score (say-do gap): {', '.join(high_disc_low_action)}."
+            )
+        docs_no_signals = [
+            r["ticker"] for r in signal_rows
+            if doc_by_company.get(r["ticker"], {}).get("total", 0) > 0 and r["signal_count"] == 0
+        ]
+        if docs_no_signals:
+            findings_say_do.append(
+                f"{len(docs_no_signals)} companies have SEC documents but no external signals collected: {', '.join(docs_no_signals)}."
+            )
+        score_spread = []
+        for r in signal_rows:
+            scores = [r["technology_hiring_score"], r["innovation_activity_score"], r["digital_presence_score"], r["leadership_signals_score"]]
+            spread = max(scores) - min(scores)
+            if spread >= 30:
+                score_spread.append(f"{r['ticker']} (spread {spread:.0f})")
+        if score_spread:
+            findings_say_do.append(
+                f"Companies with large score imbalance (strongest vs weakest dimension ≥ 30 pts): {', '.join(score_spread)}."
+            )
+    if not findings_say_do:
+        findings_say_do = ["No strong say-do gaps detected from current disclosure vs external signal alignment."]
+
+    sector_patterns = []
+    try:
+        sector_query = """
+            SELECT i.sector,
+                   AVG(s.technology_hiring_score) AS avg_hiring,
+                   AVG(s.innovation_activity_score) AS avg_innovation,
+                   AVG(s.digital_presence_score) AS avg_digital,
+                   AVG(s.leadership_signals_score) AS avg_leadership
+            FROM company_signal_summaries s
+            JOIN companies c ON c.id = s.company_id
+            JOIN industries i ON i.id = c.industry_id
+            GROUP BY i.sector
+            ORDER BY i.sector
+        """
+        sector_rows = db.execute_query(sector_query)
+        for r in sector_rows:
+            sector = r.get("sector") or "Unknown"
+            th = float(r.get("avg_hiring") or 0)
+            ia = float(r.get("avg_innovation") or 0)
+            dp = float(r.get("avg_digital") or 0)
+            lead = float(r.get("avg_leadership") or 0)
+            comp = round(W_TECH * th + W_INNOVATION * ia + W_DIGITAL * dp + W_LEADERSHIP * lead, 1)
+            sector_patterns.append((sector, {"hiring": th, "innovation": ia, "digital": dp, "leadership": lead, "composite": comp}))
+    except Exception:
+        sector_rows = []
+    sector_sentences = []
+    if sector_patterns:
+        by_composite = sorted(sector_patterns, key=lambda x: x[1]["composite"], reverse=True)
+        top = by_composite[0]
+        sector_sentences.append(f"Sector **{top[0]}** has the highest average composite score ({top[1]['composite']:.1f}).")
+        if len(by_composite) > 1:
+            bottom = by_composite[-1]
+            sector_sentences.append(f"**{bottom[0]}** has the lowest ({bottom[1]['composite']:.1f}).")
+        by_hiring = max(sector_patterns, key=lambda x: x[1]["hiring"])
+        sector_sentences.append(f"**{by_hiring[0]}** leads on average tech hiring score ({by_hiring[1]['hiring']:.1f}).")
+    if not sector_sentences:
+        sector_sentences = ["Insufficient sector-level data to summarize patterns."]
+
+    data_quality_lines = []
+    try:
+        total_companies = stats.get("total_companies", 0)
+        companies_with_docs = stats.get("companies_with_documents", 0)
+        companies_with_sigs = stats.get("companies_with_signals", 0)
+        no_docs = total_companies - companies_with_docs if total_companies else 0
+        no_sigs = total_companies - companies_with_sigs if total_companies else 0
+        if no_docs > 0 or no_sigs > 0:
+            data_quality_lines.append(f"{no_docs} companies have no SEC documents; {no_sigs} have no external signals.")
+        err_result = db.execute_one("SELECT COUNT(*) AS cnt FROM documents WHERE error_message IS NOT NULL AND error_message != ''")
+        err_count = (err_result or {}).get("cnt") or 0
+        if err_count > 0:
+            data_quality_lines.append(f"{err_count} documents have a non-empty error_message (parsing or processing issues).")
+        doc_status = stats.get("documents_by_status", {})
+        if doc_status:
+            pending = doc_status.get("pending", 0)
+            if pending > 0:
+                data_quality_lines.append(f"Document status: {pending} pending; {sum(v for k, v in doc_status.items() if k != 'pending')} in other states.")
+    except Exception:
+        data_quality_lines = ["Could not compute data quality metrics."]
+    if not data_quality_lines:
+        data_quality_lines = ["No major data quality issues identified from current stats."]
+
+    # Markdown report: three sections + Key Findings (committed to repo in docs/)
     md_path = docs_dir / "evidence_report.md"
     with open(md_path, "w") as f:
         f.write("# External Signals Report\n\n")
@@ -150,6 +246,15 @@ def main():
                 f"{row['innovation_activity_score']:.1f} | {row['digital_presence_score']:.1f} | "
                 f"{row['leadership_signals_score']:.1f} | {row['composite_score']:.1f} |\n"
             )
+
+        # 4. Key Findings (data-driven)
+        f.write("\n## Key Findings\n\n")
+        f.write("1. **Say–do gaps:** ")
+        f.write(" ".join(findings_say_do) + "\n\n")
+        f.write("2. **Patterns across sectors:** ")
+        f.write(" ".join(sector_sentences) + "\n\n")
+        f.write("3. **Data quality issues encountered:** ")
+        f.write(" ".join(data_quality_lines) + "\n")
     print(f"Wrote {md_path}")
 
     # CSV report (signal scores; gitignored, stays in reports/)
