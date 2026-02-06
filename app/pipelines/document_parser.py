@@ -1,16 +1,15 @@
-"""Document parsing and chunking for SEC filings."""
+"""Document parsing for SEC filings."""
 
 import hashlib
 import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 import pdfplumber
 from bs4 import BeautifulSoup
 
-from app.models.document import DocumentChunk, ParsedDocument
+from app.models.document import ParsedDocument
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +28,16 @@ class DocumentParser:
     def parse_filing(self, file_path: Path, ticker: str) -> ParsedDocument:
         """
         Parse a SEC filing and extract structured content.
-        
+
         Args:
             file_path: Path to the filing document
             ticker: Company ticker symbol
-            
+
         Returns:
             ParsedDocument with extracted content and metadata
         """
         suffix = file_path.suffix.lower()
-        
+
         # Parse based on file type
         if suffix == ".pdf":
             content = self._parse_pdf(file_path)
@@ -65,13 +64,13 @@ class DocumentParser:
             sections=sections,
             source_path=str(file_path),
             content_hash=content_hash,
-            word_count=len(content.split())
+            word_count=len(content.split()),
         )
 
     def _parse_pdf(self, file_path: Path) -> str:
         """Extract text from PDF using pdfplumber."""
         text_parts = []
-        
+
         try:
             with pdfplumber.open(file_path) as pdf:
                 for page in pdf.pages:
@@ -81,7 +80,7 @@ class DocumentParser:
         except Exception as e:
             logger.error(f"Error parsing PDF {file_path}: {e}")
             raise
-            
+
         return "\n\n".join(text_parts)
 
     def _parse_html(self, file_path: Path) -> str:
@@ -89,8 +88,13 @@ class DocumentParser:
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-                
-            soup = BeautifulSoup(content, "html.parser")
+
+            # Check if it's SEC SGML format (contains <DOCUMENT> tags)
+            if "<DOCUMENT>" in content and "<TYPE>" in content:
+                logger.info(f"Detected SEC SGML format in {file_path}")
+                return self._parse_sec_sgml(content)
+
+            soup = BeautifulSoup(content, "lxml")
 
             # Remove script and style elements
             for element in soup(["script", "style"]):
@@ -104,7 +108,7 @@ class DocumentParser:
             text = "\n".join(line for line in lines if line)
 
             return text
-            
+
         except Exception as e:
             logger.error(f"Error parsing HTML {file_path}: {e}")
             raise
@@ -119,7 +123,7 @@ class DocumentParser:
             if match:
                 start = match.start()
                 # Find end (next ITEM or end of document)
-                next_item = re.search(r"ITEM\s*\d", content_upper[start + 100:])
+                next_item = re.search(r"ITEM\s*\d", content_upper[start + 100 :])
                 end = start + 100 + next_item.start() if next_item else len(content)
                 # Limit section size to 50000 chars
                 sections[section_name] = content[start:end][:50000]
@@ -129,7 +133,7 @@ class DocumentParser:
     def _extract_metadata(self, file_path: Path) -> tuple[str, datetime]:
         """Extract filing type and date from file path."""
         parts = file_path.parts
-        
+
         # Try to find filing type from path
         # Path structure: .../ticker/filing_type/accession/file
         filing_type = "UNKNOWN"
@@ -150,92 +154,93 @@ class DocumentParser:
 
         return filing_type, filing_date
 
+    def _parse_sec_sgml(self, content: str) -> str:
+        """Parse SEC SGML format filing (full-submission.txt)."""
+        # Extract only the main document content, skip headers
+        documents = []
 
-class SemanticChunker:
-    """Chunk documents with section awareness for LLM processing."""
+        # Split into document sections
+        doc_pattern = r"<DOCUMENT>(.*?)</DOCUMENT>"
+        doc_matches = re.findall(doc_pattern, content, re.DOTALL)
 
-    def __init__(
-        self,
-        chunk_size: int = 1000,      # Target words per chunk
-        chunk_overlap: int = 100,    # Overlap in words
-        min_chunk_size: int = 200    # Minimum chunk size
-    ):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.min_chunk_size = min_chunk_size
+        for doc_content in doc_matches:
+            # Check document type - we want the main filing, not exhibits
+            type_match = re.search(r"<TYPE>(.*?)\n", doc_content)
+            if not type_match:
+                continue
 
-    def chunk_document(self, doc: ParsedDocument) -> list[DocumentChunk]:
-        """
-        Split document into overlapping chunks.
-        
-        Chunks each section separately to preserve context.
-        """
-        chunks = []
+            doc_type = type_match.group(1).strip()
 
-        # Chunk each section separately to preserve context
-        if doc.sections:
-            for section_name, section_content in doc.sections.items():
-                section_chunks = self._chunk_text(
-                    section_content,
-                    doc.content_hash,
-                    section_name
-                )
-                chunks.extend(section_chunks)
-        else:
-            # Chunk the entire content if no sections found
-            chunks = self._chunk_text(doc.content, doc.content_hash, None)
+            # Skip non-main documents (exhibits, graphics, etc.)
+            if any(
+                skip in doc_type for skip in ["EX-", "GRAPHIC", "XML", "ZIP", "EXCEL"]
+            ):
+                continue
 
-        # Re-index chunks sequentially
-        for i, chunk in enumerate(chunks):
-            chunk.chunk_index = i
+            # Extract the text portion (after <TEXT> tag)
+            text_match = re.search(r"<TEXT>(.*?)</TEXT>", doc_content, re.DOTALL)
+            if not text_match:
+                continue
 
-        return chunks
+            text_content = text_match.group(1)
 
-    def _chunk_text(
-        self,
-        text: str,
-        doc_id: str,
-        section: Optional[str]
-    ) -> list[DocumentChunk]:
-        """Split text into overlapping chunks."""
-        words = text.split()
-        chunks = []
-        
-        if not words:
-            return chunks
+            # Parse HTML within the TEXT section
+            soup = BeautifulSoup(text_content, "html.parser")
 
-        start_idx = 0
-        chunk_index = 0
+            # Remove unwanted elements
+            for element in soup(
+                [
+                    "script",
+                    "style",
+                    "ix:hidden",
+                    "ix:nonfraction",
+                    "ix:nonnumeric",  # XBRL inline elements
+                    "table",  # Tables often contain layout/formatting, not content
+                ]
+            ):
+                element.decompose()
 
-        while start_idx < len(words):
-            end_idx = min(start_idx + self.chunk_size, len(words))
+            # Get clean text
+            text = soup.get_text(separator="\n")
 
-            # Don't create tiny final chunks
-            if len(words) - end_idx < self.min_chunk_size:
-                end_idx = len(words)
+            # Clean up common SEC artifacts
+            text = self._clean_sec_text(text)
 
-            chunk_words = words[start_idx:end_idx]
-            chunk_content = " ".join(chunk_words)
+            documents.append(text)
 
-            # Calculate character positions (approximate)
-            start_char = len(" ".join(words[:start_idx])) if start_idx > 0 else 0
-            end_char = start_char + len(chunk_content)
+        # Join all main documents
+        return "\n\n".join(documents)
 
-            chunks.append(DocumentChunk(
-                document_id=doc_id,
-                chunk_index=chunk_index,
-                content=chunk_content,
-                section=section,
-                start_char=start_char,
-                end_char=end_char,
-                word_count=len(chunk_words)
-            ))
+    def _clean_sec_text(self, text: str) -> str:
+        """Clean up common SEC filing artifacts and formatting issues."""
+        # Remove excessive whitespace while preserving paragraph breaks
+        lines = []
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                # Remove multiple spaces
+                line = re.sub(r"\s+", " ", line)
+                lines.append(line)
 
-            # Move forward with overlap
-            start_idx = end_idx - self.chunk_overlap
-            chunk_index += 1
+        text = "\n".join(lines)
 
-            if end_idx >= len(words):
-                break
+        # Remove common SEC artifacts
+        text = re.sub(
+            r"UNITED STATES\s+SECURITIES AND EXCHANGE COMMISSION.*?FORM \d+-[KQ]",
+            "",
+            text,
+            flags=re.DOTALL,
+        )
+        text = re.sub(r"\*{3,}", "", text)  # Remove separator lines
+        text = re.sub(r"-{3,}", "", text)
+        text = re.sub(r"_{3,}", "", text)
+        text = re.sub(r"={3,}", "", text)
 
-        return chunks
+        # Remove page numbers and headers (common patterns)
+        text = re.sub(r"\n\d+\n", "\n", text)
+        text = re.sub(r"Table of Contents", "", text, flags=re.IGNORECASE)
+
+        # Remove extra blank lines (keep max 2 consecutive newlines)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        return text.strip()
