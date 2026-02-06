@@ -16,7 +16,7 @@ from app.models.evidence import (
     TARGET_COMPANIES,
 )
 from app.models.document import DocumentResponse
-from app.models.signal import CompanySignalSummaryResponse, ExternalSignalResponse
+from app.models.signal import CompanySignalSummaryResponse, ExternalSignalResponse, SignalSource
 from app.services.snowflake import SnowflakeService, get_snowflake_service
 from app.services.s3_storage import S3Storage, get_s3_storage
 
@@ -290,10 +290,48 @@ def _run_backfill(
                     innovation_score = 0.0
                     signals_collected = 0
 
-                    # Job signals (SerpAPI)
-                    postings = job_collector.fetch_postings(company_info["name"], api_key=settings.serpapi_key or None)
+                    # Job signals (careers + SerpAPI + JobSpy)
+                    postings = []
+                    careers_url = company_info.get("careers_url") if isinstance(company_info.get("careers_url"), str) else None
+                    if careers_url:
+                        postings.extend(
+                            job_collector.fetch_postings_from_careers_page(careers_url, company_info["name"])
+                        )
+                    serp_postings = job_collector.fetch_postings(
+                        company_info["name"], api_key=settings.serpapi_key or None
+                    )
+                    if serp_postings:
+                        postings.extend(serp_postings)
+                    jobspy_postings = job_collector.fetch_postings_from_jobspy(
+                        company_info["name"], location="United States", results_wanted=20
+                    )
+                    if jobspy_postings:
+                        postings.extend(jobspy_postings)
+                    postings = job_collector._dedupe_postings_by_title(postings) if postings else []
+                    used_careers = bool(careers_url)
+                    used_serp = bool(serp_postings)
+                    used_jobspy = bool(jobspy_postings)
                     if postings:
-                        job_signal = job_collector.analyze_job_postings(company_info["name"], postings, company_id)
+                        job_signal = job_collector.analyze_job_postings(
+                            company_info["name"], postings, company_id
+                        )
+                        sources_used = []
+                        if used_careers:
+                            sources_used.append("careers")
+                        if used_serp:
+                            sources_used.append("serp")
+                        if used_jobspy:
+                            sources_used.append("jobspy")
+                        if used_jobspy and not used_careers and not used_serp:
+                            job_signal = job_signal.model_copy(update={"source": SignalSource.JOBSPY})
+                        elif used_careers and used_serp:
+                            job_signal = job_signal.model_copy(update={"source": SignalSource.CAREERS_AND_SERP})
+                        elif used_careers:
+                            job_signal = job_signal.model_copy(update={"source": SignalSource.CAREERS})
+                        if sources_used:
+                            meta = dict(job_signal.metadata)
+                            meta["sources_used"] = sources_used
+                            job_signal = job_signal.model_copy(update={"metadata": meta})
                         db.insert_signal(
                             company_id=company_id,
                             category=job_signal.category.value,

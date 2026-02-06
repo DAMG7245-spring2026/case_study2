@@ -218,7 +218,7 @@ class EvidenceCollector:
         signals_collected = 0
 
         try:
-            # Job postings: collect from careers page and/or SerpApi, merge and dedupe
+            # Job postings: collect from careers page, SerpAPI, and JobSpy; merge and dedupe
             postings: list = []
             careers_url = company_info.get("careers_url") if isinstance(company_info.get("careers_url"), str) else None
             if careers_url:
@@ -230,18 +230,37 @@ class EvidenceCollector:
             )
             if serp_postings:
                 postings.extend(serp_postings)
+            jobspy_postings = self.job_collector.fetch_postings_from_jobspy(
+                company_info["name"], location="United States", results_wanted=20
+            )
+            if jobspy_postings:
+                postings.extend(jobspy_postings)
             postings = self.job_collector._dedupe_postings_by_title(postings) if postings else []
             used_careers = bool(careers_url)
             used_serp = bool(serp_postings)
+            used_jobspy = bool(jobspy_postings)
             if postings:
                 job_signal = self.job_collector.analyze_job_postings(
                     company_info["name"], postings, company_id
                 )
-                if used_careers and used_serp:
+                sources_used = []
+                if used_careers:
+                    sources_used.append("careers")
+                if used_serp:
+                    sources_used.append("serp")
+                if used_jobspy:
+                    sources_used.append("jobspy")
+                if used_jobspy and not used_careers and not used_serp:
+                    job_signal = job_signal.model_copy(update={"source": SignalSource.JOBSPY})
+                elif used_careers and used_serp:
                     job_signal = job_signal.model_copy(update={"source": SignalSource.CAREERS_AND_SERP})
                 elif used_careers:
                     job_signal = job_signal.model_copy(update={"source": SignalSource.CAREERS})
                 # else keep INDEED (only Serp)
+                if sources_used:
+                    meta = dict(job_signal.metadata)
+                    meta["sources_used"] = sources_used
+                    job_signal = job_signal.model_copy(update={"metadata": meta})
                 self.db.insert_signal(
                     company_id=company_id,
                     category=job_signal.category.value,

@@ -1,0 +1,14 @@
+{
+  "company_ticker": "CAT",
+  "filing_type": "10-K",
+  "filing_date": "2024-02-15T00:00:00Z",
+  "content": "UNITED STATES SECURITIES AND EXCHANGE COMMISSION\nWashington, D.C. 20549\nFORM 10-K\nANNUAL REPORT PURSUANT TO SECTION 13 OR 15(d) OF THE SECURITIES EXCHANGE ACT OF 1934\nFor the fiscal year ended December 31, 2023\nCATERPILLAR INC.\nItem 1. BUSINESS\nCaterpillar Inc. (the Company) is a leading manufacturer of construction and mining equipment, diesel and natural gas engines, and industrial gas turbines. The Company operates in three principal segments: Construction Industries, Resource Industries, and Energy & Transportation. The Company's products and services include machinery, engines, and financial products. The Company is committed to sustainability and digital transformation initiatives including automation and connectivity solutions.",
+  "sections": {
+    "item_1": "Item 1. BUSINESS - Caterpillar Inc. is a leading manufacturer...",
+    "item_1a": "Item 1A. RISK FACTORS - The Company's business is subject to...",
+    "item_7": "Item 7. MANAGEMENT'S DISCUSSION AND ANALYSIS..."
+  },
+  "source_path": "data/raw/sec/CAT/10-K_2024-02-15.html",
+  "content_hash": "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456",
+  "word_count": 142
+}

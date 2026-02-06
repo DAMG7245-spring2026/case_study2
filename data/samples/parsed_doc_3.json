@@ -1,0 +1,12 @@
+{
+  "company_ticker": "UNH",
+  "filing_type": "8-K",
+  "filing_date": "2024-01-18T00:00:00Z",
+  "content": "FORM 8-K\nCURRENT REPORT PURSUANT TO SECTION 13 OR 15(d) OF THE SECURITIES EXCHANGE ACT OF 1934\nDate of Report: January 18, 2024\nUNITEDHEALTH GROUP INCORPORATED\nItem 2.02 Results of Operations and Financial Condition\nOn January 18, 2024, UnitedHealth Group Incorporated announced its financial results for the fourth quarter and full year 2023. The Company reported strong performance across its Optum and UnitedHealthcare segments. Full year revenues increased reflecting growth in serving more people through diversified health benefits and services.",
+  "sections": {
+    "item_2.02": "Item 2.02 Results of Operations and Financial Condition - Earnings release..."
+  },
+  "source_path": "data/raw/sec/UNH/8-K_2024-01-18.txt",
+  "content_hash": "c3d4e5f6a7b8901234567890123456789012345678901234567890abcdef123456",
+  "word_count": 89
+}

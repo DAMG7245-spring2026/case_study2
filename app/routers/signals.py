@@ -181,15 +181,32 @@ def _run_signal_collection(
             serp_postings = job_collector.fetch_postings(name, api_key=settings.serpapi_key or None)
             if serp_postings:
                 postings.extend(serp_postings)
+            jobspy_postings = job_collector.fetch_postings_from_jobspy(name, location="United States", results_wanted=20)
+            if jobspy_postings:
+                postings.extend(jobspy_postings)
             postings = job_collector._dedupe_postings_by_title(postings) if postings else []
             used_careers = bool(careers_url)
             used_serp = bool(serp_postings)
+            used_jobspy = bool(jobspy_postings)
             if postings:
                 signal = job_collector.analyze_job_postings(name, postings, company_id)
-                if used_careers and used_serp:
+                sources_used = []
+                if used_careers:
+                    sources_used.append("careers")
+                if used_serp:
+                    sources_used.append("serp")
+                if used_jobspy:
+                    sources_used.append("jobspy")
+                if used_jobspy and not used_careers and not used_serp:
+                    signal = signal.model_copy(update={"source": SignalSource.JOBSPY})
+                elif used_careers and used_serp:
                     signal = signal.model_copy(update={"source": SignalSource.CAREERS_AND_SERP})
                 elif used_careers:
                     signal = signal.model_copy(update={"source": SignalSource.CAREERS})
+                if sources_used:
+                    meta = dict(signal.metadata)
+                    meta["sources_used"] = sources_used
+                    signal = signal.model_copy(update={"metadata": meta})
                 db.insert_signal(
                     company_id=company_id,
                     category=signal.category.value,

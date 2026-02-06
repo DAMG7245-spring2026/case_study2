@@ -1,0 +1,35 @@
+[
+  {
+    "company_id": "550e8400-e29b-41d4-a716-446655440001",
+    "ticker": "CAT",
+    "technology_hiring_score": 6.0,
+    "innovation_activity_score": 0.0,
+    "digital_presence_score": 0.0,
+    "leadership_signals_score": 0.0,
+    "signal_count": 4,
+    "composite_score": 1.8,
+    "last_updated": "2026-02-06T05:00:00Z"
+  },
+  {
+    "company_id": "550e8400-e29b-41d4-a716-446655440002",
+    "ticker": "ADP",
+    "technology_hiring_score": 59.0,
+    "innovation_activity_score": 10.0,
+    "digital_presence_score": 0.0,
+    "leadership_signals_score": 0.0,
+    "signal_count": 8,
+    "composite_score": 20.2,
+    "last_updated": "2026-02-06T05:00:00Z"
+  },
+  {
+    "company_id": "550e8400-e29b-41d4-a716-446655440003",
+    "ticker": "UNH",
+    "technology_hiring_score": 0.0,
+    "innovation_activity_score": 72.0,
+    "digital_presence_score": 0.0,
+    "leadership_signals_score": 5.0,
+    "signal_count": 6,
+    "composite_score": 19.0,
+    "last_updated": "2026-02-06T05:00:00Z"
+  }
+]

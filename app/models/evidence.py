@@ -141,7 +141,7 @@ TARGET_COMPANIES = {
         "sector": "Financial",
         "industry": "Financial Services",
         "domain": "jpmorganchase.com",
-        "careers_url": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?location=United+States&locationId=300000000289738&locationLevel=country&mode=location",
+        "careers_url": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=ai&location=United+States&locationId=300000000289738&locationLevel=country&mode=location",
         "leadership_url": "https://www.jpmorganchase.com/about/leadership",
         "news_url": "https://www.jpmorganchase.com/about/technology/news",
     },

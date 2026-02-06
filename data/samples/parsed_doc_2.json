@@ -1,0 +1,13 @@
+{
+  "company_ticker": "ADP",
+  "filing_type": "10-Q",
+  "filing_date": "2024-05-02T00:00:00Z",
+  "content": "FORM 10-Q\nQUARTERLY REPORT PURSUANT TO SECTION 13 OR 15(d) OF THE SECURITIES EXCHANGE ACT OF 1934\nFor the quarterly period ended March 31, 2024\nAUTOMATIC DATA PROCESSING, INC.\nPart I - Financial Information\nItem 1. Financial Statements\nItem 2. Management's Discussion and Analysis of Financial Condition and Results of Operations\nADP provides cloud-based human capital management solutions. Revenue for the quarter increased driven by employer services and professional employer organization growth. The Company continues to invest in technology and digital capabilities to support client needs.",
+  "sections": {
+    "item_1": "Item 1. Financial Statements - Consolidated balance sheets...",
+    "item_2": "Item 2. Management's Discussion and Analysis..."
+  },
+  "source_path": "data/raw/sec/ADP/10-Q_2024-05-02.htm",
+  "content_hash": "b2c3d4e5f6a7890123456789012345678901234567890abcdef1234567890abcd",
+  "word_count": 98
+}

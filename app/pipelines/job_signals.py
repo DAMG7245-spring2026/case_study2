@@ -3,7 +3,7 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 from uuid import UUID
 
@@ -198,6 +198,90 @@ class JobSignalCollector:
         except Exception as e:
             logger.warning("careers_fetch_failed url=%s error=%s", url, str(e))
             return []
+
+    def fetch_postings_from_jobspy(
+        self,
+        company_name: str,
+        location: str = "United States",
+        results_wanted: int = 20,
+        site_name: list[str] | None = None,
+    ) -> list[JobPosting]:
+        """
+        Fetch job postings via JobSpy (Indeed, LinkedIn, etc.). Returns [] on failure or empty.
+        """
+        try:
+            from jobspy import scrape_jobs
+        except ImportError:
+            logger.warning("jobspy_fetch_skipped reason=no_jobspy company=%s", company_name)
+            return []
+        sites = site_name or ["indeed"]
+        try:
+            kwargs = {
+                "site_name": sites,
+                "search_term": f"{company_name} jobs",
+                "location": location,
+                "results_wanted": results_wanted,
+                "hours_old": 168,
+                "verbose": 0,
+            }
+            if any(s.lower() == "indeed" for s in sites):
+                kwargs["country_indeed"] = "USA"
+            df = scrape_jobs(**kwargs)
+            if df is None or df.empty:
+                logger.debug("jobspy_fetch_empty company=%s", company_name)
+                return []
+            postings: list[JobPosting] = []
+            for _, row in df.iterrows():
+                title = self._safe_str(row, ["title", "TITLE"])
+                company = self._safe_str(row, ["company", "COMPANY"]) or company_name
+                city = self._safe_str(row, ["city", "CITY"])
+                state = self._safe_str(row, ["state", "STATE"])
+                loc = ", ".join(filter(None, [city, state])) or self._safe_str(row, ["location"]) or ""
+                desc = self._safe_str(row, ["description", "DESCRIPTION"]) or title or ""
+                url = self._safe_str(row, ["job_url", "JOB_URL"]) or ""
+                posted = None
+                for key in ["date_posted", "DATE_POSTED", "date_posted_epoch"]:
+                    if key in row and row[key] is not None:
+                        v = row[key]
+                        if hasattr(v, "isoformat"):
+                            posted = v.isoformat() if hasattr(v, "isoformat") else str(v)
+                        else:
+                            posted = str(v)
+                        break
+                site = self._safe_str(row, ["site", "SITE"]) or "jobspy"
+                if not title:
+                    continue
+                postings.append(
+                    JobPosting(
+                        title=title,
+                        company=company,
+                        location=loc,
+                        description=desc[:2000] if desc else "",
+                        posted_date=posted,
+                        source=f"jobspy_{site}",
+                        url=url,
+                        is_ai_related=False,
+                        ai_skills=[],
+                    )
+                )
+            postings = self._dedupe_postings_by_title(postings)
+            for p in postings:
+                self.classify_posting(p)
+            logger.info("jobspy_fetch_ok company=%s count=%s", company_name, len(postings))
+            return postings
+        except Exception as e:
+            logger.warning("jobspy_fetch_failed company=%s error=%s", company_name, str(e))
+            return []
+
+    def _safe_str(self, row: Any, keys: list[str]) -> str:
+        """Get first present key from row as string. Handles pandas row."""
+        for k in keys:
+            if k in row and row[k] is not None:
+                v = row[k]
+                if hasattr(v, "item"):
+                    v = v.item()
+                return str(v).strip() if v is not None else ""
+        return ""
 
     def _dedupe_postings_by_title(self, postings: list[JobPosting]) -> list[JobPosting]:
         """Deduplicate postings by normalized title (lower, collapsed spaces). Keeps first occurrence."""
