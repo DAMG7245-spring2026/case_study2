@@ -22,10 +22,14 @@ class SignalSource(str, Enum):
     INDEED = "indeed"
     GLASSDOOR = "glassdoor"
     USPTO = "uspto"
+    LENS = "lens"
     BUILTWITH = "builtwith"
+    WAPPALYZER = "wappalyzer"
     SIMILARTECH = "similartech"
     PRESS_RELEASE = "press_release"
     COMPANY_WEBSITE = "company_website"
+    CAREERS = "careers"
+    CAREERS_AND_SERP = "careers_and_serp"
 
 
 # --- Base Models ---

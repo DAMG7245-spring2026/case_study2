@@ -51,6 +51,15 @@ class S3Storage:
         except Exception as e:
             return False, str(e)
     
+    def _s3_configured(self) -> bool:
+        """Return True if S3 is configured (bucket and credentials)."""
+        s = self.settings
+        return bool(
+            (s.aws_access_key_id or "").strip()
+            and (s.aws_secret_access_key or "").strip()
+            and (s.s3_bucket or "").strip()
+        )
+
     def upload_document(
         self, 
         key: str, 
@@ -58,7 +67,10 @@ class S3Storage:
         content_type: str = "application/octet-stream",
         metadata: Optional[dict] = None
     ) -> bool:
-        """Upload a document to S3."""
+        """Upload a document to S3. Skips upload if S3 is not configured."""
+        if not self._s3_configured():
+            logger.debug("S3 upload skipped (AWS credentials or bucket not configured)")
+            return False
         try:
             extra_args = {"ContentType": content_type}
             if metadata:
@@ -72,6 +84,17 @@ class S3Storage:
             )
             logger.info(f"Uploaded document: {key}")
             return True
+        except ClientError as e:
+            err = e.response.get("Error", {})
+            if err.get("Code") == "SignatureDoesNotMatch":
+                logger.error(
+                    "Failed to upload %s: %s. Check AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY "
+                    "(no trailing spaces/newlines), AWS_REGION, and S3 bucket permissions.",
+                    key, e,
+                )
+            else:
+                logger.error(f"Failed to upload {key}: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to upload {key}: {e}")
             return False

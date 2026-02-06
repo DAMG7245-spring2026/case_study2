@@ -245,7 +245,6 @@ def _run_document_collection(
             limit=10,
             after=after_date
         )
-        
         logger.info(f"Task {task_id}: Downloaded {len(filings)} filings for {ticker}")
         
         # Process each filing

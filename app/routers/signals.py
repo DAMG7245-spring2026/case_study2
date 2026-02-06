@@ -14,6 +14,7 @@ from app.models.signal import (
     SignalCollectionResponse,
     ExternalSignalResponse,
     CompanySignalSummaryResponse,
+    SignalSource,
 )
 from app.services.snowflake import SnowflakeService, get_snowflake_service
 
@@ -55,7 +56,6 @@ async def collect_signals(
         status="queued",
         message=f"Signal collection started for company {request.company_id}"
     )
-
 
 @router.get("/signals", response_model=PaginatedSignals)
 async def list_signals(
@@ -140,87 +140,141 @@ def _run_signal_collection(
     categories: list[SignalCategory],
     db: SnowflakeService
 ):
-    """Background task for signal collection."""
+    """Background task for signal collection using real API fetches."""
     logger.info(f"Starting signal collection task {task_id} for company {company_id}")
-    
+
     try:
-        from app.pipelines import JobSignalCollector, TechStackCollector, PatentSignalCollector
-        
-        # Get company info
-        # For demo, we'll use sample data
-        company_name = "Company"  # Would come from DB lookup
-        ticker = "UNKNOWN"
-        
-        signals_collected = []
-        
+        from app.pipelines import (
+            JobSignalCollector,
+            TechStackCollector,
+            PatentSignalCollector,
+            LeadershipSignalCollector,
+        )
+        from app.models.evidence import TARGET_COMPANIES
+        from app.config import get_settings
+
+        company = db.get_company_by_id(company_id)
+        if not company:
+            logger.error(f"Task {task_id}: Company {company_id} not found")
+            return
+
+        ticker = (company.get("ticker") or "UNKNOWN").upper()
+        name = company.get("name") or "Unknown"
+        domain = TARGET_COMPANIES.get(ticker, {}).get("domain", "")
+        settings = get_settings()
+
+        job_collector = JobSignalCollector()
+        tech_collector = TechStackCollector()
+        patent_collector = PatentSignalCollector()
+
+        hiring_score = 0.0
+        digital_score = 0.0
+        innovation_score = 0.0
+        signals_collected = 0
+
         if SignalCategory.TECHNOLOGY_HIRING in categories:
-            collector = JobSignalCollector()
-            postings = collector.create_sample_postings(company_name, ai_focus="medium")
-            signal = collector.analyze_job_postings(company_name, postings, company_id)
-            
-            db.insert_signal(
-                company_id=company_id,
-                category=signal.category.value,
-                source=signal.source.value,
-                signal_date=signal.signal_date,
-                raw_value=signal.raw_value,
-                normalized_score=signal.normalized_score,
-                confidence=signal.confidence,
-                metadata=signal.metadata
-            )
-            signals_collected.append(signal)
-        
+            company_info = TARGET_COMPANIES.get(ticker, {})
+            careers_url = company_info.get("careers_url") if isinstance(company_info.get("careers_url"), str) else None
+            postings = []
+            if careers_url:
+                postings.extend(job_collector.fetch_postings_from_careers_page(careers_url, name))
+            serp_postings = job_collector.fetch_postings(name, api_key=settings.serpapi_key or None)
+            if serp_postings:
+                postings.extend(serp_postings)
+            postings = job_collector._dedupe_postings_by_title(postings) if postings else []
+            used_careers = bool(careers_url)
+            used_serp = bool(serp_postings)
+            if postings:
+                signal = job_collector.analyze_job_postings(name, postings, company_id)
+                if used_careers and used_serp:
+                    signal = signal.model_copy(update={"source": SignalSource.CAREERS_AND_SERP})
+                elif used_careers:
+                    signal = signal.model_copy(update={"source": SignalSource.CAREERS})
+                db.insert_signal(
+                    company_id=company_id,
+                    category=signal.category.value,
+                    source=signal.source.value,
+                    signal_date=signal.signal_date,
+                    raw_value=signal.raw_value,
+                    normalized_score=signal.normalized_score,
+                    confidence=signal.confidence,
+                    metadata=signal.metadata
+                )
+                hiring_score = signal.normalized_score
+                signals_collected += 1
+
         if SignalCategory.DIGITAL_PRESENCE in categories:
-            collector = TechStackCollector()
-            techs = collector.create_sample_technologies(ai_maturity="medium")
-            signal = collector.analyze_tech_stack(company_id, techs)
-            
-            db.insert_signal(
-                company_id=company_id,
-                category=signal.category.value,
-                source=signal.source.value,
-                signal_date=signal.signal_date,
-                raw_value=signal.raw_value,
-                normalized_score=signal.normalized_score,
-                confidence=signal.confidence,
-                metadata=signal.metadata
-            )
-            signals_collected.append(signal)
-        
+            techs = tech_collector.fetch_tech_stack(domain, api_key=settings.builtwith_api_key or None)
+            if techs:
+                signal = tech_collector.analyze_tech_stack(company_id, techs)
+                db.insert_signal(
+                    company_id=company_id,
+                    category=signal.category.value,
+                    source=signal.source.value,
+                    signal_date=signal.signal_date,
+                    raw_value=signal.raw_value,
+                    normalized_score=signal.normalized_score,
+                    confidence=signal.confidence,
+                    metadata=signal.metadata
+                )
+                digital_score = signal.normalized_score
+                signals_collected += 1
+
         if SignalCategory.INNOVATION_ACTIVITY in categories:
-            collector = PatentSignalCollector()
-            patents = collector.create_sample_patents(company_name, ai_innovation="medium")
-            signal = collector.analyze_patents(company_id, patents)
-            
-            db.insert_signal(
-                company_id=company_id,
-                category=signal.category.value,
-                source=signal.source.value,
-                signal_date=signal.signal_date,
-                raw_value=signal.raw_value,
-                normalized_score=signal.normalized_score,
-                confidence=signal.confidence,
-                metadata=signal.metadata
+            patents = patent_collector.fetch_patents(name, api_key=settings.lens_api_key or None)
+            if patents:
+                signal = patent_collector.analyze_patents(company_id, patents)
+                db.insert_signal(
+                    company_id=company_id,
+                    category=signal.category.value,
+                    source=signal.source.value,
+                    signal_date=signal.signal_date,
+                    raw_value=signal.raw_value,
+                    normalized_score=signal.normalized_score,
+                    confidence=signal.confidence,
+                    metadata=signal.metadata
+                )
+                innovation_score = signal.normalized_score
+                signals_collected += 1
+
+        leadership_score = 0.0
+        if SignalCategory.LEADERSHIP_SIGNALS in categories:
+            leadership_collector = LeadershipSignalCollector()
+            company_info = TARGET_COMPANIES.get(ticker, {})
+            leadership_url = company_info.get("leadership_url") if isinstance(company_info.get("leadership_url"), str) else None
+            if leadership_url:
+                website_data = leadership_collector.fetch_leadership_page(leadership_url)
+            else:
+                website_data = None
+            if not website_data:
+                website_data = leadership_collector.fetch_from_company_website(domain)
+            leadership_signals = leadership_collector.analyze_leadership(
+                company_id, website_data=website_data
             )
-            signals_collected.append(signal)
-        
-        # Update summary
-        if signals_collected:
-            hiring_score = next((s.normalized_score for s in signals_collected if s.category == SignalCategory.TECHNOLOGY_HIRING), 0)
-            innovation_score = next((s.normalized_score for s in signals_collected if s.category == SignalCategory.INNOVATION_ACTIVITY), 0)
-            digital_score = next((s.normalized_score for s in signals_collected if s.category == SignalCategory.DIGITAL_PRESENCE), 0)
-            
-            db.upsert_signal_summary(
-                company_id=company_id,
-                ticker=ticker,
-                technology_hiring_score=hiring_score,
-                innovation_activity_score=innovation_score,
-                digital_presence_score=digital_score,
-                leadership_signals_score=50.0,  # Placeholder
-                signal_count=len(signals_collected)
-            )
-        
-        logger.info(f"Task {task_id} completed: {len(signals_collected)} signals collected")
-        
+            for sig in leadership_signals:
+                db.insert_signal(
+                    company_id=company_id,
+                    category=sig.category.value,
+                    source=sig.source.value,
+                    signal_date=sig.signal_date,
+                    raw_value=sig.raw_value,
+                    normalized_score=sig.normalized_score,
+                    confidence=sig.confidence,
+                    metadata=sig.metadata
+                )
+                leadership_score = max(leadership_score, sig.normalized_score)
+                signals_collected += 1
+
+        db.upsert_signal_summary(
+            company_id=company_id,
+            ticker=ticker,
+            technology_hiring_score=hiring_score,
+            innovation_activity_score=innovation_score,
+            digital_presence_score=digital_score,
+            leadership_signals_score=leadership_score,
+            signal_count=signals_collected
+        )
+        logger.info(f"Task {task_id} completed: {signals_collected} signals collected")
+
     except Exception as e:
         logger.error(f"Task {task_id} failed: {e}")

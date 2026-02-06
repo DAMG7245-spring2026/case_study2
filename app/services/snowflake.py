@@ -566,6 +566,11 @@ class SnowflakeService:
         query = "SELECT * FROM companies WHERE ticker = %s AND is_deleted = FALSE"
         return self.execute_one(query, (ticker.upper(),))
 
+    def get_company_by_id(self, company_id: UUID) -> Optional[dict[str, Any]]:
+        """Get company by ID (returns id, name, ticker, etc.)."""
+        query = "SELECT id, name, ticker FROM companies WHERE id = %s AND is_deleted = FALSE"
+        return self.execute_one(query, (str(company_id),))
+
     def get_or_create_company(
         self,
         ticker: str,

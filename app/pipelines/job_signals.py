@@ -1,11 +1,14 @@
 """Job posting signal collector for AI hiring analysis."""
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 from uuid import UUID
 
 import httpx
+from bs4 import BeautifulSoup
 
 from app.models.signal import (
     ExternalSignalCreate,
@@ -38,11 +41,174 @@ class JobSignalCollector:
         "pandas", "numpy", "sql", "databricks"
     ]
 
+    # Only keep jobs posted within this many days (SerpApi often returns "X days ago")
+    RECENT_DAYS = 7
+
     def __init__(self):
         self.client = httpx.Client(
             timeout=30.0,
             headers={"User-Agent": "Mozilla/5.0 (compatible; research)"}
         )
+
+    def _posted_within_days(self, posted_str: Optional[str], days: float = 7) -> bool:
+        """True if posted_str indicates the job was posted within the last `days` days, or if unparseable (keep)."""
+        if not posted_str or not isinstance(posted_str, str):
+            return True
+        s = posted_str.strip().lower()
+        if s in ("just posted", "today"):
+            return True
+        if s == "yesterday":
+            return days >= 1
+        # "N hours ago" or "N hour ago"
+        m = re.match(r"(\d+)\s*hours?\s*ago", s)
+        if m:
+            return int(m.group(1)) <= (days * 24)
+        # "N days ago" or "N day ago"
+        m = re.match(r"(\d+)\s*days?\s*ago", s)
+        if m:
+            return int(m.group(1)) <= days
+        # "1 week ago", "2 weeks ago"
+        m = re.match(r"(\d+)\s*weeks?\s*ago", s)
+        if m:
+            return int(m.group(1)) * 7 <= days
+        # "N+ days ago", "30+ days ago", "1 month ago" etc. -> exclude
+        if re.search(r"\d+\s*\+\s*days?\s*ago", s) or "month" in s or "year" in s:
+            return False
+        return True  # unparseable: keep
+
+    def fetch_postings(self, company_name: str, api_key: str | None = None) -> list["JobPosting"]:
+        """Fetch job postings from SerpApi (Google Jobs). Returns [] if no key or on failure."""
+        if not api_key or not api_key.strip():
+            logger.debug("job_fetch_skipped reason=no_api_key company=%s", company_name)
+            return []
+        try:
+            url = "https://serpapi.com/search.json"
+            params = {
+                "engine": "google_jobs",
+                "q": f"{company_name} jobs",
+                "api_key": api_key,
+            }
+            r = self.client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+            jobs_data = data.get("jobs_results") or data.get("organic_results") or []
+            postings = []
+            for j in jobs_data[:50]:
+                title = j.get("title") or ""
+                desc = j.get("description") or j.get("snippet") or ""
+                company = j.get("company_name") or company_name
+                loc = (j.get("location") or [""])[0] if isinstance(j.get("location"), list) else (j.get("location") or "")
+                link = j.get("link") or j.get("apply_link") or ""
+                # Use posted_at if it's a string, else date if available, else None
+                posted_at_val = j.get("posted_at")
+                date_val = j.get("date")
+                if isinstance(posted_at_val, str):
+                    posted = posted_at_val
+                elif isinstance(date_val, str):
+                    posted = date_val
+                else:
+                    posted = None
+                if not title and not desc:
+                    continue
+                if not self._posted_within_days(posted, self.RECENT_DAYS):
+                    continue
+                p = JobPosting(
+                    title=title,
+                    company=company,
+                    location=loc,
+                    description=desc,
+                    posted_date=posted,
+                    source="serpapi_google_jobs",
+                    url=link,
+                    is_ai_related=False,
+                    ai_skills=[],
+                )
+                p = self.classify_posting(p)
+                postings.append(p)
+            logger.info("job_fetch_ok company=%s count=%s", company_name, len(postings))
+            return postings
+        except Exception as e:
+            logger.warning("job_fetch_failed company=%s error=%s", company_name, str(e))
+            return []
+
+    def fetch_postings_from_careers_page(self, url: str, company_name: str) -> list[JobPosting]:
+        """
+        Fetch job postings from a company careers page by URL.
+        Uses generic HTML parsing (links with job/career/position, common class names).
+        Returns [] on failure or if no jobs found.
+        """
+        url = (url or "").strip()
+        if not url or not company_name:
+            return []
+        if not url.startswith("http"):
+            url = f"https://{url}"
+        try:
+            r = self.client.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; research)"},
+                timeout=20.0,
+                follow_redirects=True,
+            )
+            if r.status_code != 200:
+                logger.debug("careers_fetch_failed url=%s status=%s", url, r.status_code)
+                return []
+            soup = BeautifulSoup(r.text, "html.parser")
+            postings: list[JobPosting] = []
+            base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+
+            # Collect links that look like job listings
+            job_path_keywords = ("/job", "/jobs", "/career", "/careers", "/position", "/opening", "/req", "/role")
+            for a in soup.find_all("a", href=True):
+                href = (a.get("href") or "").strip().lower()
+                if not any(kw in href for kw in job_path_keywords):
+                    continue
+                title = (a.get_text(strip=True) or "").strip()
+                if len(title) < 3 or len(title) > 200:
+                    continue
+                link_url = urljoin(base, a.get("href", ""))
+                # Prefer description from parent/sibling if available
+                desc = ""
+                parent = a.parent
+                if parent:
+                    sibs = parent.find_all(string=True, recursive=False)
+                    desc = " ".join(str(s).strip() for s in sibs if s.strip())[:500]
+                if not desc:
+                    desc = title
+                postings.append(
+                    JobPosting(
+                        title=title,
+                        company=company_name,
+                        location="",
+                        description=desc,
+                        posted_date=None,
+                        source="careers",
+                        url=link_url,
+                        is_ai_related=False,
+                        ai_skills=[],
+                    )
+                )
+                if len(postings) >= 100:
+                    break
+
+            postings = self._dedupe_postings_by_title(postings)
+            for p in postings:
+                self.classify_posting(p)
+            logger.info("careers_fetch_ok url=%s company=%s count=%s", url, company_name, len(postings))
+            return postings
+        except Exception as e:
+            logger.warning("careers_fetch_failed url=%s error=%s", url, str(e))
+            return []
+
+    def _dedupe_postings_by_title(self, postings: list[JobPosting]) -> list[JobPosting]:
+        """Deduplicate postings by normalized title (lower, collapsed spaces). Keeps first occurrence."""
+        seen: set[str] = set()
+        out: list[JobPosting] = []
+        for p in postings:
+            key = re.sub(r"\s+", " ", p.title.lower().strip())
+            if key and key not in seen:
+                seen.add(key)
+                out.append(p)
+        return out
 
     def analyze_job_postings(
         self,
@@ -52,34 +218,22 @@ class JobSignalCollector:
     ) -> ExternalSignalCreate:
         """
         Analyze job postings to calculate hiring signal score.
-        
-        Scoring (0-100):
-        - AI job ratio * 60 (max 60 points)
-        - Skill diversity: len(skills) / 10 * 20 (max 20 points)
-        - Volume bonus: min(ai_jobs / 5, 1) * 20 (max 20 points)
+        Scoring (0-100): AI job ratio, skill diversity, volume bonus.
         """
-        # Classify all postings
         classified = [self.classify_posting(p) for p in postings]
-        
         total_tech_jobs = len([p for p in classified if self._is_tech_job(p)])
         ai_jobs = len([p for p in classified if p.is_ai_related])
 
-        # Calculate metrics
         ai_ratio = ai_jobs / total_tech_jobs if total_tech_jobs > 0 else 0
-
-        # Collect all AI skills mentioned
         all_skills = set()
         for posting in classified:
             all_skills.update(posting.ai_skills)
 
-        # Calculate score
         score = (
             min(ai_ratio * 60, 60) +
             min(len(all_skills) / 10, 1) * 20 +
             min(ai_jobs / 5, 1) * 20
         )
-
-        # Calculate confidence based on sample size
         confidence = min(0.5 + total_tech_jobs / 100, 0.95)
 
         return ExternalSignalCreate(
