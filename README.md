@@ -2,6 +2,11 @@
 
 AI Readiness Assessment Platform for Private Equity Portfolio Companies with automated SEC filings collection and external operational signals analysis.
 
+## Links
+
+- FastAPI public URL: http://35.93.9.162:8000/docs
+- Demo video link: https://www.youtube.com/watch?v=ATQqYbEYGnM
+
 ## 🎯 Project Overview
 
 This platform automates the collection and analysis of evidence for AI readiness assessment across multiple portfolio companies. It combines:
