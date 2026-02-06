@@ -69,10 +69,11 @@ class TestSignalEndpoints:
         company_id = str(uuid4())
         override_snowflake.execute_one.return_value = {"ticker": "AAPL", "name": "Apple"}
         
-        with patch("app.routers.signals.JobSignalCollector"), \
-             patch("app.routers.signals.TechStackCollector"), \
-             patch("app.routers.signals.PatentSignalCollector"), \
-             patch("app.routers.signals.LeadershipSignalCollector"):
+        with patch("app.pipelines.JobSignalCollector"), \
+             patch("app.pipelines.DigitalPresenceCollector") as mock_dp, \
+             patch("app.pipelines.PatentSignalCollector"), \
+             patch("app.pipelines.LeadershipSignalCollector"):
+            mock_dp.return_value.collect.return_value = ([], 0.0)
             response = client.post("/api/v1/signals/collect", json={"company_id": company_id})
         
         assert response.status_code == 200

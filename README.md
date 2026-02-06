@@ -488,7 +488,7 @@ case_study2/
 │   │   ├── document_parser.py      # iXBRL cleaning + section extraction
 │   │   ├── document_chunker.py     # Semantic chunking
 │   │   ├── job_signals.py          # SerpAPI + careers page
-│   │   ├── tech_signals.py         # BuiltWith API
+│   │   ├── digital_presence_signals.py  # BuiltWith + company news
 │   │   ├── patent_signals.py       # Lens.org API
 │   │   └── leadership_signals.py   # Website scraping
 │   ├── routers/
@@ -543,7 +543,7 @@ case_study2/
 **Nisarg Sheth:**
 
 - Built `JobSignalCollector` with SerpAPI and careers page integration
-- Implemented `TechStackCollector` using BuiltWith API
+- Implemented `DigitalPresenceCollector` (BuiltWith + company news) for digital presence signals
 - Developed `PatentSignalCollector` with Lens.org API
 - Created `LeadershipSignalCollector` with website scraping
 - Designed normalized scoring (0-100) and confidence metrics (0-1)

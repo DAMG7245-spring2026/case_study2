@@ -1,6 +1,6 @@
 # External Signals Report
 
-Generated: 2026-02-06 06:00 UTC
+Generated: 2026-02-06 08:41 UTC
 
 ### Summary Statistics
 
@@ -9,7 +9,7 @@ Generated: 2026-02-06 06:00 UTC
 | Companies processed | 8 |
 | Total documents | 193 |
 | Total chunks | 7850 |
-| Total signals | 52 |
+| Total signals | 62 |
 
 ### Documents by Company
 
@@ -26,20 +26,20 @@ Generated: 2026-02-06 06:00 UTC
 
 ### Signal Scores by Company
 
-| Ticker | Hiring | Innovation | Tech | Leadership | Composite |
-|--------|--------|------------|------|------------|----------|
-| ADP | 59.0 | 10.0 | 0.0 | 0.0 | 20.2 |
-| CAT | 6.0 | 0.0 | 0.0 | 0.0 | 1.8 |
-| DE | 34.0 | 25.0 | 0.0 | 0.0 | 16.4 |
-| GS | 30.0 | 0.0 | 0.0 | 55.0 | 20.0 |
-| JPM | 0.0 | 40.0 | 0.0 | 65.0 | 23.0 |
-| PAYX | 52.0 | 44.0 | 32.5 | 50.0 | 44.7 |
-| TGT | 0.0 | 0.0 | 0.0 | 50.0 | 10.0 |
-| UNH | 0.0 | 72.0 | 0.0 | 5.0 | 19.0 |
+| Ticker | Hiring | Innovation | Digital Presence | Leadership | Composite | Signals |
+|--------|--------|------------|------------------|------------|----------|--------|
+| ADP | 59.0 | 10.0 | 0.0 | 0.0 | 20.2 | 3 |
+| CAT | 6.0 | 0.0 | 0.0 | 0.0 | 1.8 | 3 |
+| DE | 34.0 | 25.0 | 0.0 | 0.0 | 16.4 | 3 |
+| GS | 30.0 | 0.0 | 0.0 | 55.0 | 20.0 | 4 |
+| JPM | 4.0 | 40.0 | 30.0 | 65.0 | 31.7 | 5 |
+| PAYX | 52.0 | 44.0 | 32.5 | 50.0 | 44.7 | 3 |
+| TGT | 0.0 | 0.0 | 0.0 | 50.0 | 10.0 | 1 |
+| UNH | 0.0 | 72.0 | 0.0 | 5.0 | 19.0 | 4 |
 
 ## Key Findings
 
-1. **Say–do gaps:** 3 companies have above-average document count but below-average composite score (say-do gap): CAT, TGT, UNH. Companies with large score imbalance (strongest vs weakest dimension ≥ 30 pts): ADP (spread 59), DE (spread 34), GS (spread 55), JPM (spread 65), TGT (spread 50), UNH (spread 72).
+1. **Say–do gaps:** 4 companies have above-average document count but below-average composite score (say-do gap): ADP, CAT, TGT, UNH. Companies with large score imbalance (strongest vs weakest dimension ≥ 30 pts): ADP (spread 59), DE (spread 34), GS (spread 55), JPM (spread 61), TGT (spread 50), UNH (spread 72).
 
 2. **Patterns across sectors:** Sector **Services** has the highest average composite score (32.5). **Industrials** has the lowest (9.1). **Services** leads on average tech hiring score (55.5).
 

@@ -30,6 +30,7 @@ class SignalSource(str, Enum):
     COMPANY_WEBSITE = "company_website"
     CAREERS = "careers"
     CAREERS_AND_SERP = "careers_and_serp"
+    COMPANY_NEWS = "company_news"
 
 
 # --- Base Models ---

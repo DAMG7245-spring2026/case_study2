@@ -238,13 +238,13 @@ def main():
 
         # 3. Signal Scores by Company
         f.write("\n### Signal Scores by Company\n\n")
-        f.write("| Ticker | Hiring | Innovation | Tech | Leadership | Composite |\n")
-        f.write("|--------|--------|------------|------|------------|----------|\n")
+        f.write("| Ticker | Hiring | Innovation | Digital Presence | Leadership | Composite | Signals |\n")
+        f.write("|--------|--------|------------|------------------|------------|----------|--------|\n")
         for row in signal_rows:
             f.write(
                 f"| {row['ticker']} | {row['technology_hiring_score']:.1f} | "
                 f"{row['innovation_activity_score']:.1f} | {row['digital_presence_score']:.1f} | "
-                f"{row['leadership_signals_score']:.1f} | {row['composite_score']:.1f} |\n"
+                f"{row['leadership_signals_score']:.1f} | {row['composite_score']:.1f} | {row['signal_count']} |\n"
             )
 
         # 4. Key Findings (data-driven)

@@ -26,7 +26,7 @@ from app.pipelines import (
     DocumentParser,
     SemanticChunker,
     JobSignalCollector,
-    TechStackCollector,
+    DigitalPresenceCollector,
     PatentSignalCollector,
     LeadershipSignalCollector,
 )
@@ -70,7 +70,7 @@ class EvidenceCollector:
         
         # Signal collectors
         self.job_collector = JobSignalCollector()
-        self.tech_collector = TechStackCollector()
+        self.digital_presence_collector = DigitalPresenceCollector()
         self.patent_collector = PatentSignalCollector()
         
         # Statistics
@@ -256,25 +256,28 @@ class EvidenceCollector:
                 signals_collected += 1
                 logger.info(f"   ✅ Hiring signal: {job_signal.normalized_score:.1f}")
 
-            # Technology stack signal (BuiltWith)
-            techs = self.tech_collector.fetch_tech_stack(
-                domain, api_key=settings.builtwith_api_key or None
+            # Digital presence (BuiltWith + company news)
+            news_url = company_info.get("news_url") if isinstance(company_info.get("news_url"), str) else None
+            dp_signals, digital_score = self.digital_presence_collector.collect(
+                company_id=company_id,
+                ticker=ticker,
+                domain=domain,
+                news_url=news_url,
+                builtwith_api_key=settings.builtwith_api_key or None,
             )
-            if techs:
-                tech_signal = self.tech_collector.analyze_tech_stack(company_id, techs)
+            for sig in dp_signals:
                 self.db.insert_signal(
                     company_id=company_id,
-                    category=tech_signal.category.value,
-                    source=tech_signal.source.value,
-                    signal_date=tech_signal.signal_date,
-                    raw_value=tech_signal.raw_value,
-                    normalized_score=tech_signal.normalized_score,
-                    confidence=tech_signal.confidence,
-                    metadata=tech_signal.metadata
+                    category=sig.category.value,
+                    source=sig.source.value,
+                    signal_date=sig.signal_date,
+                    raw_value=sig.raw_value,
+                    normalized_score=sig.normalized_score,
+                    confidence=sig.confidence,
+                    metadata=sig.metadata
                 )
-                digital_score = tech_signal.normalized_score
                 signals_collected += 1
-                logger.info(f"   ✅ Tech stack signal: {tech_signal.normalized_score:.1f}")
+                logger.info(f"   ✅ Digital presence ({sig.source.value}): {sig.normalized_score:.1f}")
 
             # Patent signal (Lens)
             patents = self.patent_collector.fetch_patents(
@@ -527,6 +530,22 @@ Examples:
         }, f, indent=2, default=str)
     
     logger.info(f"📁 Results saved to {output_file}")
+
+    # Update docs/evidence_report.md and reports/external_signals_report.csv after every run
+    if include_signals:
+        import subprocess
+        report_script = Path(__file__).parent / "generate_report.py"
+        try:
+            subprocess.run(
+                [sys.executable, str(report_script)],
+                cwd=Path(__file__).parent.parent,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            logger.info("📄 Evidence report updated (docs/evidence_report.md, reports/external_signals_report.csv)")
+        except Exception as e:
+            logger.warning("Could not update evidence report: %s", e)
 
 
 if __name__ == "__main__":

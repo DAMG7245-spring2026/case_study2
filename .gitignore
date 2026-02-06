@@ -127,7 +127,9 @@ snowflake_credentials.json
 # ==============================================
 tmp/
 temp/
-data/
+# Ignore generated data; data/samples/ is tracked for submission
+data/raw/
+data/evidence_summary.json
 *.tmp
 *.temp
 

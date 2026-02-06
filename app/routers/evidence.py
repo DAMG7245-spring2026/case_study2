@@ -155,7 +155,7 @@ def _run_backfill(
     
     from app.pipelines import (
         SECEdgarPipeline, DocumentParser, SemanticChunker,
-        JobSignalCollector, TechStackCollector, PatentSignalCollector,
+        JobSignalCollector, DigitalPresenceCollector, PatentSignalCollector,
         LeadershipSignalCollector,
     )
     from app.config import get_settings
@@ -281,7 +281,7 @@ def _run_backfill(
             if include_signals:
                 try:
                     job_collector = JobSignalCollector()
-                    tech_collector = TechStackCollector()
+                    digital_presence_collector = DigitalPresenceCollector()
                     patent_collector = PatentSignalCollector()
                     domain = company_info.get("domain") or ""
 
@@ -307,21 +307,26 @@ def _run_backfill(
                         hiring_score = job_signal.normalized_score
                         signals_collected += 1
 
-                    # Tech signals (BuiltWith)
-                    techs = tech_collector.fetch_tech_stack(domain, api_key=settings.builtwith_api_key or None)
-                    if techs:
-                        tech_signal = tech_collector.analyze_tech_stack(company_id, techs)
+                    # Digital presence (BuiltWith + company news)
+                    news_url = company_info.get("news_url") if isinstance(company_info.get("news_url"), str) else None
+                    dp_signals, digital_score = digital_presence_collector.collect(
+                        company_id=company_id,
+                        ticker=ticker,
+                        domain=domain,
+                        news_url=news_url,
+                        builtwith_api_key=settings.builtwith_api_key or None,
+                    )
+                    for sig in dp_signals:
                         db.insert_signal(
                             company_id=company_id,
-                            category=tech_signal.category.value,
-                            source=tech_signal.source.value,
-                            signal_date=tech_signal.signal_date,
-                            raw_value=tech_signal.raw_value,
-                            normalized_score=tech_signal.normalized_score,
-                            confidence=tech_signal.confidence,
-                            metadata=tech_signal.metadata
+                            category=sig.category.value,
+                            source=sig.source.value,
+                            signal_date=sig.signal_date,
+                            raw_value=sig.raw_value,
+                            normalized_score=sig.normalized_score,
+                            confidence=sig.confidence,
+                            metadata=sig.metadata
                         )
-                        digital_score = tech_signal.normalized_score
                         signals_collected += 1
 
                     # Patent signals (Lens)

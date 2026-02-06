@@ -146,7 +146,7 @@ def _run_signal_collection(
     try:
         from app.pipelines import (
             JobSignalCollector,
-            TechStackCollector,
+            DigitalPresenceCollector,
             PatentSignalCollector,
             LeadershipSignalCollector,
         )
@@ -164,7 +164,7 @@ def _run_signal_collection(
         settings = get_settings()
 
         job_collector = JobSignalCollector()
-        tech_collector = TechStackCollector()
+        digital_presence_collector = DigitalPresenceCollector()
         patent_collector = PatentSignalCollector()
 
         hiring_score = 0.0
@@ -204,20 +204,26 @@ def _run_signal_collection(
                 signals_collected += 1
 
         if SignalCategory.DIGITAL_PRESENCE in categories:
-            techs = tech_collector.fetch_tech_stack(domain, api_key=settings.builtwith_api_key or None)
-            if techs:
-                signal = tech_collector.analyze_tech_stack(company_id, techs)
+            company_info = TARGET_COMPANIES.get(ticker, {})
+            news_url = company_info.get("news_url") if isinstance(company_info.get("news_url"), str) else None
+            dp_signals, digital_score = digital_presence_collector.collect(
+                company_id=company_id,
+                ticker=ticker,
+                domain=domain,
+                news_url=news_url,
+                builtwith_api_key=settings.builtwith_api_key or None,
+            )
+            for sig in dp_signals:
                 db.insert_signal(
                     company_id=company_id,
-                    category=signal.category.value,
-                    source=signal.source.value,
-                    signal_date=signal.signal_date,
-                    raw_value=signal.raw_value,
-                    normalized_score=signal.normalized_score,
-                    confidence=signal.confidence,
-                    metadata=signal.metadata
+                    category=sig.category.value,
+                    source=sig.source.value,
+                    signal_date=sig.signal_date,
+                    raw_value=sig.raw_value,
+                    normalized_score=sig.normalized_score,
+                    confidence=sig.confidence,
+                    metadata=sig.metadata
                 )
-                digital_score = signal.normalized_score
                 signals_collected += 1
 
         if SignalCategory.INNOVATION_ACTIVITY in categories:
