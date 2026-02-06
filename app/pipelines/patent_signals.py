@@ -43,7 +43,7 @@ class PatentSignalCollector:
     def fetch_patents(self, company_name: str, api_key: str | None = None) -> list[Patent]:
         """Fetch patents from Lens.org API by applicant/owner name. Returns [] if no key or on failure."""
         if not api_key or not api_key.strip():
-            logger.debug("patent_fetch_skipped", reason="no_api_key", company=company_name)
+            logger.debug("patent_fetch_skipped reason=no_api_key company=%s", company_name)
             return []
         try:
             base = "https://api.lens.org/patent/search"
@@ -129,13 +129,13 @@ class PatentSignalCollector:
                 )
                 patent = self.classify_patent(patent)
                 out.append(patent)
-            logger.info("patent_fetch_ok", company=company_name, count=len(out), source="lens")
+            logger.info("patent_fetch_ok company=%s count=%s source=lens", company_name, len(out))
             return out
         except Exception as e:
             err_msg = str(e)
             if "token=" in err_msg:
                 err_msg = re.sub(r"token=[^\s&'\"]+", "token=***", err_msg)
-            logger.warning("patent_fetch_failed", company=company_name, error=err_msg, source="lens")
+            logger.warning("patent_fetch_failed company=%s error=%s source=lens", company_name, err_msg)
             return []
 
     def analyze_patents(

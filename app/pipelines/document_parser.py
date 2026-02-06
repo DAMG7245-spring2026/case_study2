@@ -90,7 +90,7 @@ class DocumentParser:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
                 
-            soup = BeautifulSoup(content, "lxml")
+            soup = BeautifulSoup(content, "html.parser")
 
             # Remove script and style elements
             for element in soup(["script", "style"]):

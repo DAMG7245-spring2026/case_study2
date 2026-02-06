@@ -14,6 +14,7 @@ from app.models.signal import (
     SignalCollectionResponse,
     ExternalSignalResponse,
     CompanySignalSummaryResponse,
+    SignalSource,
 )
 from app.services.snowflake import SnowflakeService, get_snowflake_service
 
@@ -172,9 +173,23 @@ def _run_signal_collection(
         signals_collected = 0
 
         if SignalCategory.TECHNOLOGY_HIRING in categories:
-            postings = job_collector.fetch_postings(name, api_key=settings.serpapi_key or None)
+            company_info = TARGET_COMPANIES.get(ticker, {})
+            careers_url = company_info.get("careers_url") if isinstance(company_info.get("careers_url"), str) else None
+            postings = []
+            if careers_url:
+                postings.extend(job_collector.fetch_postings_from_careers_page(careers_url, name))
+            serp_postings = job_collector.fetch_postings(name, api_key=settings.serpapi_key or None)
+            if serp_postings:
+                postings.extend(serp_postings)
+            postings = job_collector._dedupe_postings_by_title(postings) if postings else []
+            used_careers = bool(careers_url)
+            used_serp = bool(serp_postings)
             if postings:
                 signal = job_collector.analyze_job_postings(name, postings, company_id)
+                if used_careers and used_serp:
+                    signal = signal.model_copy(update={"source": SignalSource.CAREERS_AND_SERP})
+                elif used_careers:
+                    signal = signal.model_copy(update={"source": SignalSource.CAREERS})
                 db.insert_signal(
                     company_id=company_id,
                     category=signal.category.value,
@@ -225,12 +240,16 @@ def _run_signal_collection(
         leadership_score = 0.0
         if SignalCategory.LEADERSHIP_SIGNALS in categories:
             leadership_collector = LeadershipSignalCollector()
-            website_data = leadership_collector.fetch_from_company_website(domain)
-            linkedin_data = leadership_collector.fetch_from_linkedin(
-                name, api_key=settings.linkedin_api_key or None
-            )
+            company_info = TARGET_COMPANIES.get(ticker, {})
+            leadership_url = company_info.get("leadership_url") if isinstance(company_info.get("leadership_url"), str) else None
+            if leadership_url:
+                website_data = leadership_collector.fetch_leadership_page(leadership_url)
+            else:
+                website_data = None
+            if not website_data:
+                website_data = leadership_collector.fetch_from_company_website(domain)
             leadership_signals = leadership_collector.analyze_leadership(
-                company_id, website_data=website_data, linkedin_data=linkedin_data
+                company_id, website_data=website_data
             )
             for sig in leadership_signals:
                 db.insert_signal(

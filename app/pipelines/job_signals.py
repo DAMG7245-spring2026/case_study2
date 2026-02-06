@@ -4,9 +4,11 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 from uuid import UUID
 
 import httpx
+from bs4 import BeautifulSoup
 
 from app.models.signal import (
     ExternalSignalCreate,
@@ -77,7 +79,7 @@ class JobSignalCollector:
     def fetch_postings(self, company_name: str, api_key: str | None = None) -> list["JobPosting"]:
         """Fetch job postings from SerpApi (Google Jobs). Returns [] if no key or on failure."""
         if not api_key or not api_key.strip():
-            logger.debug("job_fetch_skipped", reason="no_api_key", company=company_name)
+            logger.debug("job_fetch_skipped reason=no_api_key company=%s", company_name)
             return []
         try:
             url = "https://serpapi.com/search.json"
@@ -123,11 +125,90 @@ class JobSignalCollector:
                 )
                 p = self.classify_posting(p)
                 postings.append(p)
-            logger.info("job_fetch_ok", company=company_name, count=len(postings))
+            logger.info("job_fetch_ok company=%s count=%s", company_name, len(postings))
             return postings
         except Exception as e:
-            logger.warning("job_fetch_failed", company=company_name, error=str(e))
+            logger.warning("job_fetch_failed company=%s error=%s", company_name, str(e))
             return []
+
+    def fetch_postings_from_careers_page(self, url: str, company_name: str) -> list[JobPosting]:
+        """
+        Fetch job postings from a company careers page by URL.
+        Uses generic HTML parsing (links with job/career/position, common class names).
+        Returns [] on failure or if no jobs found.
+        """
+        url = (url or "").strip()
+        if not url or not company_name:
+            return []
+        if not url.startswith("http"):
+            url = f"https://{url}"
+        try:
+            r = self.client.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; research)"},
+                timeout=20.0,
+                follow_redirects=True,
+            )
+            if r.status_code != 200:
+                logger.debug("careers_fetch_failed url=%s status=%s", url, r.status_code)
+                return []
+            soup = BeautifulSoup(r.text, "html.parser")
+            postings: list[JobPosting] = []
+            base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+
+            # Collect links that look like job listings
+            job_path_keywords = ("/job", "/jobs", "/career", "/careers", "/position", "/opening", "/req", "/role")
+            for a in soup.find_all("a", href=True):
+                href = (a.get("href") or "").strip().lower()
+                if not any(kw in href for kw in job_path_keywords):
+                    continue
+                title = (a.get_text(strip=True) or "").strip()
+                if len(title) < 3 or len(title) > 200:
+                    continue
+                link_url = urljoin(base, a.get("href", ""))
+                # Prefer description from parent/sibling if available
+                desc = ""
+                parent = a.parent
+                if parent:
+                    sibs = parent.find_all(string=True, recursive=False)
+                    desc = " ".join(str(s).strip() for s in sibs if s.strip())[:500]
+                if not desc:
+                    desc = title
+                postings.append(
+                    JobPosting(
+                        title=title,
+                        company=company_name,
+                        location="",
+                        description=desc,
+                        posted_date=None,
+                        source="careers",
+                        url=link_url,
+                        is_ai_related=False,
+                        ai_skills=[],
+                    )
+                )
+                if len(postings) >= 100:
+                    break
+
+            postings = self._dedupe_postings_by_title(postings)
+            for p in postings:
+                self.classify_posting(p)
+            logger.info("careers_fetch_ok url=%s company=%s count=%s", url, company_name, len(postings))
+            return postings
+        except Exception as e:
+            logger.warning("careers_fetch_failed url=%s error=%s", url, str(e))
+            return []
+
+    def _dedupe_postings_by_title(self, postings: list[JobPosting]) -> list[JobPosting]:
+        """Deduplicate postings by normalized title (lower, collapsed spaces). Keeps first occurrence."""
+        seen: set[str] = set()
+        out: list[JobPosting] = []
+        for p in postings:
+            key = re.sub(r"\s+", " ", p.title.lower().strip())
+            if key and key not in seen:
+                seen.add(key)
+                out.append(p)
+        return out
 
     def analyze_job_postings(
         self,

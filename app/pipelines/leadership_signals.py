@@ -1,4 +1,4 @@
-"""Leadership (executive commitment) signal collector from company website and optional LinkedIn."""
+"""Leadership (executive commitment) signal collector from company website."""
 
 import logging
 import re
@@ -39,9 +39,16 @@ COMMITMENT_KEYWORDS = [
     "innovation", "data", "automation", "machine learning", "cloud",
 ]
 
+# Scoring: points per keyword (tunable). Combined score 0–100; no single hardcoded output.
+POINTS_PER_LEADERSHIP_KEYWORD = 5   # need 10+ leadership keywords to reach 50 from this dimension
+POINTS_PER_COMMITMENT_KEYWORD = 5   # need 10+ commitment keywords to reach 50 from this dimension
+MAX_LEADERSHIP_POINTS = 50.0
+MAX_COMMITMENT_POINTS = 50.0
+MAX_TOTAL_SCORE = 100.0
+
 
 class LeadershipSignalCollector:
-    """Collect and score leadership (executive commitment) signals from company website and optional LinkedIn."""
+    """Collect and score leadership (executive commitment) signals from company website."""
 
     def __init__(self):
         self.client = httpx.Client(
@@ -54,6 +61,31 @@ class LeadershipSignalCollector:
             },
         )
 
+    def fetch_leadership_page(self, url: str) -> Optional[dict]:
+        """
+        Fetch a single leadership page by URL (e.g. company-specific /about/leadership).
+        Returns {"text": str, "url": str} if successful and text is long enough, else None.
+        """
+        url = (url or "").strip()
+        if not url:
+            return None
+        if not url.startswith("http"):
+            url = f"https://{url}"
+        try:
+            r = self.client.get(url)
+            if r.status_code != 200:
+                logger.debug("leadership_fetch_failed url=%s status=%s", url, r.status_code)
+                return None
+            text = self._extract_text(r.text)
+            if not text or len(text) < MIN_TEXT_LENGTH:
+                logger.debug("leadership_fetch_too_short url=%s length=%s", url, len(text) if text else 0)
+                return None
+            logger.info("leadership_fetch_ok source=leadership_url url=%s length=%s", url, len(text))
+            return {"text": text, "url": url}
+        except Exception as e:
+            logger.warning("leadership_fetch_failed url=%s error=%s", url, str(e))
+            return None
+
     def fetch_from_company_website(self, domain: str) -> Optional[dict]:
         """
         Fetch leadership/about page content from company domain.
@@ -61,7 +93,7 @@ class LeadershipSignalCollector:
         """
         domain = (domain or "").strip().lower()
         if not domain:
-            logger.info("leadership_fetch_skipped", reason="no_domain")
+            logger.info("leadership_fetch_skipped reason=no_domain")
             return None
         if not domain.startswith("http"):
             base = f"https://{domain}"
@@ -83,42 +115,24 @@ class LeadershipSignalCollector:
                 if not text or len(text) < MIN_TEXT_LENGTH:
                     continue
                 logger.info(
-                    "leadership_fetch_ok",
-                    source="company_website",
-                    url=url,
-                    length=len(text),
-                    domain=domain,
+                    "leadership_fetch_ok source=company_website url=%s length=%s domain=%s",
+                    url, len(text), domain,
                 )
                 return {"text": text, "url": url}
             except Exception as e:
                 last_error = str(e)
-                logger.debug("leadership_fetch_try_failed", url=url, error=last_error)
+                logger.debug("leadership_fetch_try_failed url=%s error=%s", url, last_error)
                 continue
 
         logger.info(
-            "leadership_fetch_no_page",
-            domain=domain,
-            last_status=last_status,
-            last_error=last_error or "all paths failed or too little text",
+            "leadership_fetch_no_page domain=%s last_status=%s last_error=%s",
+            domain, last_status, last_error or "all paths failed or too little text",
         )
-        return None
-
-    def fetch_from_linkedin(self, company_name: str, api_key: str | None = None) -> Optional[dict]:
-        """
-        Fetch company/exec data from a LinkedIn data API when key is provided.
-        Uses a third-party API (e.g. RapidAPI LinkedIn Company); if no key or API
-        not configured, returns None. Stub implementation: plug in concrete endpoint when available.
-        """
-        if not api_key or not api_key.strip():
-            logger.debug("leadership_fetch_skipped", reason="no_linkedin_api_key", company=company_name)
-            return None
-        # TODO: integrate a concrete LinkedIn data API (e.g. RapidAPI) when key is provided
-        logger.debug("leadership_linkedin_stub", company=company_name)
         return None
 
     def _extract_text(self, html: str) -> str:
         """Extract main text from HTML, strip scripts/styles."""
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header"]):
             tag.decompose()
         text = soup.get_text(separator=" ", strip=True)
@@ -132,11 +146,14 @@ class LeadershipSignalCollector:
         leadership_count = sum(1 for k in LEADERSHIP_KEYWORDS if k in lower)
         commitment_count = sum(1 for k in COMMITMENT_KEYWORDS if k in lower)
 
-        # Simple heuristic: presence of both dimensions scores higher
-        # Max 50 from leadership dimension, 50 from commitment dimension
-        leadership_score = min(leadership_count * 8, 50)
-        commitment_score = min(commitment_count * 8, 50)
-        score = min(leadership_score + commitment_score, 100.0)
+        # Heuristic: both dimensions contribute; use constants so score is not hardcoded
+        leadership_score = min(
+            leadership_count * POINTS_PER_LEADERSHIP_KEYWORD, MAX_LEADERSHIP_POINTS
+        )
+        commitment_score = min(
+            commitment_count * POINTS_PER_COMMITMENT_KEYWORD, MAX_COMMITMENT_POINTS
+        )
+        score = min(leadership_score + commitment_score, MAX_TOTAL_SCORE)
 
         raw = f"leadership_mentions={leadership_count}, commitment_mentions={commitment_count}"
         metadata = {
@@ -150,11 +167,10 @@ class LeadershipSignalCollector:
         self,
         company_id: UUID,
         website_data: Optional[dict] = None,
-        linkedin_data: Optional[dict] = None,
     ) -> list[ExternalSignalCreate]:
         """
-        Produce one ExternalSignalCreate per source that has data.
-        Each signal has category=LEADERSHIP_SIGNALS and source=COMPANY_WEBSITE or LINKEDIN.
+        Produce up to one ExternalSignalCreate from company website data.
+        Signal has category=LEADERSHIP_SIGNALS and source=COMPANY_WEBSITE.
         """
         signals: list[ExternalSignalCreate] = []
         now = datetime.now(timezone.utc)
@@ -171,21 +187,6 @@ class LeadershipSignalCollector:
                     raw_value=raw_value[:500],
                     normalized_score=score,
                     confidence=0.75,
-                    metadata=meta,
-                )
-            )
-
-        if linkedin_data and linkedin_data.get("text"):
-            score, raw_value, meta = self._score_leadership_text(linkedin_data["text"])
-            signals.append(
-                ExternalSignalCreate(
-                    company_id=company_id,
-                    category=SignalCategory.LEADERSHIP_SIGNALS,
-                    source=SignalSource.LINKEDIN,
-                    signal_date=now,
-                    raw_value=raw_value[:500],
-                    normalized_score=score,
-                    confidence=0.8,
                     metadata=meta,
                 )
             )

@@ -341,14 +341,17 @@ def _run_backfill(
                         innovation_score = patent_signal.normalized_score
                         signals_collected += 1
 
-                    # Leadership signals (company website + optional LinkedIn)
+                    # Leadership signals (leadership_url first, then company website fallback)
                     leadership_collector = LeadershipSignalCollector()
-                    website_data = leadership_collector.fetch_from_company_website(domain)
-                    linkedin_data = leadership_collector.fetch_from_linkedin(
-                        company_info["name"], api_key=settings.linkedin_api_key or None
-                    )
+                    leadership_url = company_info.get("leadership_url") if isinstance(company_info.get("leadership_url"), str) else None
+                    if leadership_url:
+                        website_data = leadership_collector.fetch_leadership_page(leadership_url)
+                    else:
+                        website_data = None
+                    if not website_data:
+                        website_data = leadership_collector.fetch_from_company_website(domain)
                     leadership_signals = leadership_collector.analyze_leadership(
-                        company_id, website_data=website_data, linkedin_data=linkedin_data
+                        company_id, website_data=website_data
                     )
                     if not leadership_signals:
                         logger.info(

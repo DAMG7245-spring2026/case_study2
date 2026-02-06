@@ -28,6 +28,8 @@ class SignalSource(str, Enum):
     SIMILARTECH = "similartech"
     PRESS_RELEASE = "press_release"
     COMPANY_WEBSITE = "company_website"
+    CAREERS = "careers"
+    CAREERS_AND_SERP = "careers_and_serp"
 
 
 # --- Base Models ---

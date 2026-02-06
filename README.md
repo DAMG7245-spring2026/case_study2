@@ -255,6 +255,8 @@ AWS_REGION=your_aws_region
 S3_BUCKET=your_bucket_name
 ```
 
+**S3 is optional:** If these are empty, SEC filings are still downloaded, parsed, and stored in Snowflake; only the S3 copy is skipped. If you see `SignatureDoesNotMatch` when uploading, check: no trailing spaces/newlines in `AWS_SECRET_ACCESS_KEY`, correct `AWS_ACCESS_KEY_ID`, and `AWS_REGION` matching your bucket.
+
 **Optional – External Signals (jobs, tech stack, patents):**  
 If set, the evidence collection script will fetch real data; if omitted, those sources are skipped.
 

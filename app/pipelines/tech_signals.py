@@ -72,10 +72,10 @@ class TechStackCollector:
         Returns [] if no key or on failure.
         """
         if not api_key or not api_key.strip():
-            logger.debug("tech_fetch_skipped", reason="no_api_key", domain=domain)
+            logger.debug("tech_fetch_skipped reason=no_api_key domain=%s", domain)
             return []
         if not domain or not domain.strip():
-            logger.debug("tech_fetch_skipped", reason="no_domain")
+            logger.debug("tech_fetch_skipped reason=no_domain")
             return []
         try:
             lookup = domain.strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
@@ -87,7 +87,7 @@ class TechStackCollector:
             errors = data.get("Errors") or []
             if errors:
                 msg = errors[0].get("Message") or errors[0].get("Code") or str(errors[0])
-                logger.warning("tech_fetch_failed", domain=lookup, error=msg)
+                logger.warning("tech_fetch_failed domain=%s error=%s", lookup, msg)
                 return []
             results = data.get("free1") or data.get("Results") or data
             if isinstance(results, list) and results:
@@ -116,10 +116,10 @@ class TechStackCollector:
                     is_ai_cat = any(kw in cat_name for kw in self.AI_TECHNOLOGIES)
                     techs.append(TechnologyDetection(name=cat_name, category="other", is_ai_related=is_ai_cat, confidence=0.7))
             time.sleep(1)
-            logger.info("tech_fetch_ok", domain=lookup, count=len(techs))
+            logger.info("tech_fetch_ok domain=%s count=%s", lookup, len(techs))
             return techs
         except Exception as e:
-            logger.warning("tech_fetch_failed", domain=domain, error=str(e))
+            logger.warning("tech_fetch_failed domain=%s error=%s", domain, str(e))
             return []
 
     def analyze_tech_stack(

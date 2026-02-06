@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.models.evidence import TARGET_COMPANIES
+from app.models.signal import SignalSource
 from app.pipelines import (
     SECEdgarPipeline,
     DocumentParser,
@@ -217,14 +218,30 @@ class EvidenceCollector:
         signals_collected = 0
 
         try:
-            # Job posting signal (SerpAPI)
-            postings = self.job_collector.fetch_postings(
+            # Job postings: collect from careers page and/or SerpApi, merge and dedupe
+            postings: list = []
+            careers_url = company_info.get("careers_url") if isinstance(company_info.get("careers_url"), str) else None
+            if careers_url:
+                postings.extend(
+                    self.job_collector.fetch_postings_from_careers_page(careers_url, company_info["name"])
+                )
+            serp_postings = self.job_collector.fetch_postings(
                 company_info["name"], api_key=settings.serpapi_key or None
             )
+            if serp_postings:
+                postings.extend(serp_postings)
+            postings = self.job_collector._dedupe_postings_by_title(postings) if postings else []
+            used_careers = bool(careers_url)
+            used_serp = bool(serp_postings)
             if postings:
                 job_signal = self.job_collector.analyze_job_postings(
                     company_info["name"], postings, company_id
                 )
+                if used_careers and used_serp:
+                    job_signal = job_signal.model_copy(update={"source": SignalSource.CAREERS_AND_SERP})
+                elif used_careers:
+                    job_signal = job_signal.model_copy(update={"source": SignalSource.CAREERS})
+                # else keep INDEED (only Serp)
                 self.db.insert_signal(
                     company_id=company_id,
                     category=job_signal.category.value,
@@ -279,14 +296,17 @@ class EvidenceCollector:
                 signals_collected += 1
                 logger.info(f"   ✅ Patent signal: {patent_signal.normalized_score:.1f}")
 
-            # Leadership signals (company website + optional LinkedIn)
+            # Leadership signals: try company-specific leadership_url first, else domain paths
             leadership_collector = LeadershipSignalCollector()
-            website_data = leadership_collector.fetch_from_company_website(domain)
-            linkedin_data = leadership_collector.fetch_from_linkedin(
-                company_info["name"], api_key=settings.linkedin_api_key or None
-            )
+            leadership_url = company_info.get("leadership_url") if isinstance(company_info.get("leadership_url"), str) else None
+            if leadership_url:
+                website_data = leadership_collector.fetch_leadership_page(leadership_url)
+            else:
+                website_data = None
+            if not website_data:
+                website_data = leadership_collector.fetch_from_company_website(domain)
             leadership_signals = leadership_collector.analyze_leadership(
-                company_id, website_data=website_data, linkedin_data=linkedin_data
+                company_id, website_data=website_data
             )
             if not leadership_signals:
                 logger.info(
@@ -510,4 +530,8 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.warning("\n⚠️  Interrupted by user (Ctrl+C). Partial results may have been saved.")
+        sys.exit(130)  # 130 = standard exit for SIGINT
